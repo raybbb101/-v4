@@ -3,7 +3,7 @@ import './models.js';
 import { warm, drawModel, SQ } from './stack.js';
 import { createGame, step, makeView, choose, buy, roomInfo, setPaused, PCOLORS, devJump } from './sim.js';
 import { Renderer } from './render.js';
-import { Host, Guest } from './net.js';
+import { makeHost, makeGuest, lanInfo } from './net.js';
 import { initAudio, sfx, playSong, setMuted, isMuted } from './audio.js';
 import { SPELL, META, MAX_LV } from './spells.js';
 import { DIFFS, BIOMES } from './enemies.js';
@@ -25,7 +25,7 @@ const save = loadSave();
 function writeSave() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch { /* 無視 */ } }
 
 // ---------- 状態 ----------
-const S = { mode: 'title', G: null, me: 'p0', host: null, guest: null, lobby: [], snaps: [], lastView: null, paused: false, choiceOpen: false, shopOpen: false, ended: false, sendT: 0, inT: 0, code: '', auto: true, startedAt: 0 };
+const S = { mode: 'title', G: null, me: 'p0', host: null, guest: null, local: 0, net: 'peer', shopFor: 'p0', lobby: [], snaps: [], lastView: null, paused: false, choiceOpen: false, shopOpen: false, ended: false, sendT: 0, inT: 0, code: '', auto: true, startedAt: 0 };
 const canvas = $('game');
 const R = new Renderer(canvas);
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -48,10 +48,11 @@ addEventListener('keydown', (e) => {
     if (S.choiceOpen && /^[1-5]$/.test(k)) { const btn = $('cards').querySelectorAll('.card')[+k - 1]; if (btn) btn.click(); return; }
     if (/^[1-6]$/.test(k)) { latch.cast[+k - 1] = true; e.preventDefault(); }
     if (k === ' ') { latch.dash = true; e.preventDefault(); }
+    if (S.local && (k === 'shift' && e.location === 2 || e.code === 'Numpad0' || k === '/' || k === 'enter')) { latch.dash2 = true; e.preventDefault(); }
     if (k === 't') { S.auto = !S.auto; UI.toast(S.auto ? '自動詠唱：魔法を自動で撃つ' : '手動詠唱：1〜6 キーとマウスで狙う'); }
     if (k === 'e') latch.use = true;
     if (k === 'escape') { if (S.shopOpen) closeShop(); else togglePause(); }
-    if (k === 'enter' && (S.host || S.guest)) { $('chatIn').classList.remove('hidden'); $('chatIn').focus(); e.preventDefault(); }
+    if (k === 'enter' && !S.local && (S.host || S.guest)) { $('chatIn').classList.remove('hidden'); $('chatIn').focus(); e.preventDefault(); }
   }
   if (k === 'f' && !typing()) toggleFull();
   if (k === 'm') { setMuted(!isMuted()); save.muted = isMuted(); writeSave(); UI.toast(isMuted() ? '音を消した' : '音を出した'); }
@@ -86,13 +87,43 @@ if (isTouch) {
   $('tUse').addEventListener('pointerdown', (e) => { e.preventDefault(); latch.use = true; });
 }
 
+// ---------- ゲームパッド ----------
+const padPrev = {};
+function pads() { return [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter((g) => g && g.connected); }
+function padState(g) {
+  const dz = (v) => (Math.abs(v) < 0.2 ? 0 : v);
+  const b = (i) => !!(g.buttons[i] && g.buttons[i].pressed);
+  const prev = padPrev[g.index] || {}, now = { a: b(0), b: b(1), x: b(2), y: b(3), rb: b(5), lb: b(4), start: b(9), l: b(14), r: b(15) };
+  padPrev[g.index] = now;
+  const press = (k) => now[k] && !prev[k];
+  let mx = dz(g.axes[0] || 0), my = dz(g.axes[1] || 0);
+  if (b(14)) mx = -1; if (b(15)) mx = 1; if (b(12)) my = -1; if (b(13)) my = 1;
+  return { mx, my, dash: press('a') || press('rb'), use: press('y'), start: press('start'), left: press('l') || press('lb'), right: press('r'), pick: press('a') || press('x') };
+}
+// 同じ画面のときの 2 人目以降の操作: ゲームパッド、なければ矢印キー
+function localInput(i, ps) {
+  const padIdx = i - 1;
+  const list = pads();
+  if (list[padIdx]) { const st = ps[list[padIdx].index]; return { mx: st.mx, my: st.my, dash: st.dash, cast: [], auto: true, use: st.use }; }
+  if (i === 1) {
+    let mx = 0, my = 0;
+    if (keys.has('arrowleft')) mx -= 1; if (keys.has('arrowright')) mx += 1; if (keys.has('arrowup')) my -= 1; if (keys.has('arrowdown')) my += 1;
+    const d = latch.dash2; latch.dash2 = false;
+    return { mx, my, dash: d, cast: [], auto: true };
+  }
+  return { mx: 0, my: 0, cast: [], auto: true };
+}
+
 function readInput() {
   let mx = 0, my = 0;
-  if (keys.has('a') || keys.has('arrowleft')) mx -= 1;
-  if (keys.has('d') || keys.has('arrowright')) mx += 1;
-  if (keys.has('w') || keys.has('arrowup')) my -= 1;
-  if (keys.has('s') || keys.has('arrowdown')) my += 1;
+  const arrows = !S.local;
+  if (keys.has('a') || (arrows && keys.has('arrowleft'))) mx -= 1;
+  if (keys.has('d') || (arrows && keys.has('arrowright'))) mx += 1;
+  if (keys.has('w') || (arrows && keys.has('arrowup'))) my -= 1;
+  if (keys.has('s') || (arrows && keys.has('arrowdown'))) my += 1;
   if (stick.id != null) { mx = stick.x; my = stick.y; }
+  // ひとり（とオンライン）ではゲームパッドでも動かせる
+  if (!S.local && !mx && !my) { const g = pads()[0]; if (g) { const st = S.padState[g.index]; if (st) { mx = st.mx; my = st.my; if (st.dash) latch.dash = true; if (st.use) latch.use = true; } } }
   // 画面の縦は床が縮んでいるので、見た目どおりに動くよう少し補正
   const w = R.toWorld(mouse.x, mouse.y);
   const inp = { mx, my, ax: Math.round(w.x), ay: Math.round(w.y + 12 / SQ), fire: mouse.down && !S.auto, dash: latch.dash, cast: latch.cast.slice(), auto: S.auto };
@@ -102,15 +133,16 @@ function clearLatch() { latch.dash = false; latch.cast.fill(false); latch.use = 
 
 // ---------- 画面の切り替え ----------
 function toTitle() {
-  S.mode = 'title'; S.G = null; S.ended = false;
+  S.mode = 'title'; S.G = null; S.ended = false; S.local = 0; R.followIds = null; S.direct = null;
   if (S.host) { S.host.close(); S.host = null; } if (S.guest) { S.guest.close(); S.guest = null; }
-  for (const id of ['hud', 'choice', 'shop', 'pause', 'result', 'lobby', 'book', 'altar']) UI.show(id, false);
+  for (const id of ['hud', 'choice', 'shop', 'pause', 'result', 'lobby', 'book', 'altar', 'wifi', 'local']) UI.show(id, false);
   UI.show('title'); $('crystalCount').textContent = save.crystals; $('titleStatus').textContent = '';
   R.room = null; playSong(5);
 }
 
 function startRun(players, diff) {
-  S.G = createGame({ players, diff, meta: save.meta });
+  S.G = createGame({ players, diff, meta: save.meta, local: !!S.local });
+  R.followIds = S.local ? players.map((q) => q.id) : null;
   S.mode = 'play'; S.ended = false; S.startedAt = performance.now();
   for (const id of ['title', 'lobby', 'result']) UI.show(id, false);
   UI.show('hud'); UI.show('touch', isTouch); if (isTouch) S.auto = true;
@@ -124,12 +156,13 @@ $('btnSolo').onclick = () => { initAudio(); sfx('ui'); S.me = 'p0'; startRun([{ 
 function myName() { const n = $('nameInput').value.trim() || '魔法使い'; save.name = n; writeSave(); return n; }
 
 // ---------- ホスト ----------
-$('btnHost').onclick = () => {
+$('btnHost').onclick = () => startHost('peer', 'titleStatus');
+function startHost(kind, statusId) {
   initAudio(); sfx('ui');
-  $('titleStatus').textContent = 'ルームを作っています…';
-  S.me = 'p0'; S.lobby = [{ id: 'p0', name: myName(), conn: null }];
-  S.host = new Host({
-    ready: (code) => { S.code = code; openLobby(true); },
+  $(statusId).textContent = kind === 'direct' ? '' : 'ルームを作っています…';
+  S.me = 'p0'; S.lobby = [{ id: 'p0', name: myName(), conn: null }]; S.net = kind; S.code = '';
+  S.host = makeHost(kind, {
+    ready: (code) => { S.code = code; UI.show('wifi', false); openLobby(true); },
     join: (conn) => {
       const id = 'p' + (Date.now() % 100000) + Math.floor(Math.random() * 99);
       conn._pid = id; S.lobby.push({ id, name: '…', conn });
@@ -143,9 +176,9 @@ $('btnHost').onclick = () => {
       if (pl) { sysChat(`${pl.name} が抜けました`); if (S.G) { const p = S.G.players.find((q) => q.id === pl.id); if (p) { p.dead = true; p.hp = 0; p.left = true; } } }
       lobbyUpdate();
     },
-    error: (t) => { $('titleStatus').textContent = t; S.host = null; },
+    error: (t) => { $(statusId).textContent = t; if (S.mode === 'lobby') toTitle(); S.host = null; },
   });
-};
+}
 const hostInputs = {};
 function hostMsg(conn, m) {
   const pid = conn._pid;
@@ -172,8 +205,11 @@ function openLobby(isHost) {
   $('lobbyTitle').textContent = isHost ? 'ルームを作りました' : 'ルームに入りました';
   $('lobbyCode').textContent = S.code;
   $('codeBox').classList.toggle('hidden', !S.code);
+  $('directBox').classList.toggle('hidden', !(isHost && S.net === 'direct'));
+  $('copyLink').classList.toggle('hidden', S.net !== 'peer');
+  $('inviteOut').value = ''; $('answerIn').value = '';
   $('btnStart').classList.toggle('hidden', !isHost);
-  $('lobbyHint').textContent = isHost ? '仲間にこのコードを伝えてください（最大 4 人）。そろったら「冒険を始める」。' : 'ホストが冒険を始めるのを待っています…';
+  $('lobbyHint').textContent = !isHost ? 'ホストが冒険を始めるのを待っています…' : S.net === 'direct' ? '仲間ひとりずつ、招待コードを送って返事コードをもらいます（最大 4 人）。そろったら「冒険を始める」。' : S.net === 'lan' ? '仲間は同じアドレスを開いて、この部屋番号を入れます（最大 4 人）。' : '仲間にこのコードを伝えてください（最大 4 人）。そろったら「冒険を始める」。';
   $('lobbyChat').innerHTML = '';
   lobbyUpdate();
 }
@@ -190,21 +226,25 @@ $('btnLeave').onclick = () => toTitle();
 
 // ---------- ゲスト ----------
 $('btnJoin').onclick = () => {
-  initAudio(); sfx('ui');
   const code = $('codeInput').value.trim().toUpperCase();
   if (code.length < 5) { $('titleStatus').textContent = 'コードは 5 文字です'; return; }
-  $('titleStatus').textContent = '接続しています…';
-  S.code = code;
-  S.guest = new Guest(code, {
+  startGuest('peer', code, 'titleStatus');
+};
+function startGuest(kind, code, statusId) {
+  initAudio(); sfx('ui');
+  $(statusId).textContent = '接続しています…';
+  S.code = kind === 'direct' ? '' : code; S.net = kind;
+  S.guest = makeGuest(kind, code, {
     open: () => { S.guest.send({ t: 'name', name: myName() }); },
     message: (m) => guestMsg(m),
     close: () => { if (S.mode !== 'title') { UI.toast('ホストとの接続が切れました'); setTimeout(toTitle, 1500); } },
-    error: (t) => { $('titleStatus').textContent = t; S.guest = null; },
+    error: (t) => { $(statusId).textContent = t; S.guest = null; },
   });
-};
+  return S.guest;
+}
 function guestMsg(m) {
   switch (m.t) {
-    case 'hello': S.me = m.id; openLobby(false); break;
+    case 'hello': S.me = m.id; UI.show('wifi', false); openLobby(false); break;
     case 'full': $('titleStatus').textContent = 'このルームは満員です'; break;
     case 'reject': $('titleStatus').textContent = m.text; break;
     case 'lobby': S.lobby = m.list; $('lobbyPlayers').innerHTML = m.list.map((q, i) => `<li style="--c:${PCOLORS[i % 4]}">${i === 0 ? '👑 ' : ''}${escapeHtml(q.name)}${q.id === S.me ? '（あなた）' : ''}</li>`).join(''); break;
@@ -217,6 +257,69 @@ function guestMsg(m) {
     case 'chat': showChat(m.name, m.text); break;
   }
 }
+
+// ---------- 同じ Wi-Fi ----------
+async function copyText(t) { try { await navigator.clipboard.writeText(t); UI.toast('コピーしました'); } catch { UI.toast('長押しでコピーしてください'); } }
+async function shareText(t, title) { if (navigator.share) { try { await navigator.share({ title, text: t }); return; } catch { /* 取り消し */ } } copyText(t); }
+$('btnWifi').onclick = async () => {
+  initAudio(); sfx('ui'); UI.show('wifi'); $('wifiStatus').textContent = ''; $('directStatus').textContent = '';
+  $('answerOut').classList.add('hidden'); $('answerBtns').classList.add('hidden'); $('inviteIn').value = '';
+  const info = await lanInfo();
+  UI.show('lanOn', !!info); UI.show('lanOff', !info);
+  if (info) $('lanUrls').innerHTML = info.urls.map((u) => `<span>${escapeHtml(u)}</span>`).join('') || `<span>${escapeHtml(location.origin)}</span>`;
+};
+$('btnWifiClose').onclick = () => { UI.show('wifi', false); if (S.guest && S.mode === 'title') { S.guest.close(); S.guest = null; } };
+$('btnDirectHost').onclick = () => startHost('direct', 'wifiStatus');
+$('btnLanHost').onclick = () => startHost('lan', 'wifiStatus');
+$('btnLanJoin').onclick = () => { const c = $('lanCode').value.trim(); if (!/^\d{4}$/.test(c)) { $('wifiStatus').textContent = '部屋番号は 4 けたの数字です'; return; } startGuest('lan', c, 'wifiStatus'); };
+$('btnDirectJoin').onclick = async () => {
+  const code = $('inviteIn').value.trim(); if (!code) { $('directStatus').textContent = '招待コードを貼りつけてください'; return; }
+  if (S.guest) { S.guest.close(); S.guest = null; }
+  const g = startGuest('direct', '', 'directStatus');
+  $('directStatus').textContent = '返事コードを作っています…';
+  try {
+    const ans = await g.answer(code);
+    $('answerOut').value = ans; $('answerOut').classList.remove('hidden'); $('answerBtns').classList.remove('hidden');
+    $('directStatus').textContent = 'この返事コードをホストに送ってください。ホストが貼りつけるとつながります。';
+  } catch (e) { $('directStatus').textContent = '招待コードが読めません（' + (e.message || e) + '）。全部コピーできているか確認してください。'; }
+};
+$('copyAnswer').onclick = () => copyText($('answerOut').value);
+$('shareAnswer').onclick = () => shareText($('answerOut').value, '魔法戦争 v4 の返事コード');
+$('btnInvite').onclick = async () => {
+  if (!S.host || !S.host.invite) return;
+  $('btnInvite').disabled = true; $('inviteOut').value = '作っています…';
+  try { $('inviteOut').value = await S.host.invite(); } catch (e) { $('inviteOut').value = ''; UI.toast('招待コードを作れませんでした: ' + (e.message || e)); }
+  $('btnInvite').disabled = false;
+};
+$('copyInvite').onclick = () => copyText($('inviteOut').value);
+$('shareInvite').onclick = () => shareText($('inviteOut').value, '魔法戦争 v4 の招待コード');
+$('btnAccept').onclick = async () => {
+  try { await S.host.accept($('answerIn').value); $('answerIn').value = ''; UI.toast('つないでいます…'); }
+  catch (e) { UI.toast('返事コードが読めません: ' + (e.message || e)); }
+};
+
+// ---------- 同じ画面で協力 ----------
+let localN = 2;
+function drawLocal() {
+  $('localN').innerHTML = [2, 3, 4].map((n) => `<button data-n="${n}" aria-pressed="${n === localN}">${n} 人</button>`).join('');
+  $('localN').querySelectorAll('button').forEach((b) => (b.onclick = () => { localN = +b.dataset.n; drawLocal(); }));
+  const list = pads(), col = (i) => PCOLORS[i % 4];
+  const rows = [`<div class="pl"><b style="color:${col(0)}">P1</b>キーボード（WASD 移動・Space 回避・マウスで狙う・1〜6 魔法）${isTouch ? '／画面のスティック' : ''}</div>`];
+  for (let i = 1; i < localN; i++) {
+    const g = list[i - 1];
+    rows.push(`<div class="pl"><b style="color:${col(i)}">P${i + 1}</b>${g ? '🎮 ' + escapeHtml(g.id.slice(0, 32)) + '（スティック移動・A 回避・Y 調べる）' : i === 1 ? '矢印キーで移動・右 Shift / Enter / テンキー0 で回避' : '⚠ ゲームパッドをつないでボタンを押してください'}</div>`);
+  }
+  rows.push('<p class="hint">2 人目からは魔法を自動で撃ちます。ゲームパッドはつないでからボタンを 1 回押すと見つかります。</p>');
+  $('localPads').innerHTML = rows.join('');
+}
+$('btnLocal').onclick = () => { initAudio(); sfx('ui'); UI.show('local'); drawLocal(); clearInterval(S.padPoll); S.padPoll = setInterval(() => { if (!$('local').classList.contains('hidden')) drawLocal(); }, 1000); };
+$('btnLocalClose').onclick = () => { UI.show('local', false); clearInterval(S.padPoll); };
+$('btnLocalStart').onclick = () => {
+  clearInterval(S.padPoll); UI.show('local', false);
+  S.local = localN; S.me = 'p0';
+  const players = Array.from({ length: localN }, (_, i) => ({ id: 'p' + i, name: i === 0 ? myName() : 'P' + (i + 1) }));
+  startRun(players, save.diff);
+};
 
 // ---------- チャット ----------
 function showChat(name, text) { UI.chatLine($('lobbyChat'), name, text); UI.chatLine($('chatLog'), name, text); if (S.mode === 'play') sfx('ui'); }
@@ -253,18 +356,29 @@ function handleEvent(e) {
 }
 
 // ---------- 選択・店 ----------
-function pickChoice(i) { sfx('pick'); if (S.guest) S.guest.send({ t: 'pick', idx: i }); else choose(S.G, S.me, i); UI.show('choice', false); S.choiceOpen = false; S.choiceSig = ''; }
+function pickChoice(i) { sfx('pick'); if (S.guest) S.guest.send({ t: 'pick', idx: i }); else choose(S.G, S.choiceFor || S.me, i); UI.show('choice', false); S.choiceOpen = false; S.choiceSig = ''; }
 function syncChoice(p) {
+  if (S.local && S.lastView) {
+    // 同じ画面: 選ぶ必要がある人を順番に
+    const q = S.lastView.players.find((x) => x.ch);
+    S.choiceFor = q ? q.id : S.me; p = q || p;
+    if (q) { const t = $('choiceTitle'); const pre = `P${q.slot + 1}（${q.name}）: `; if (S.choiceSig === JSON.stringify(q.ch) + q.rr && !t.textContent.startsWith(pre)) t.textContent = pre + t.textContent; }
+  }
   if (!p || !p.ch) { if (S.choiceOpen) { UI.show('choice', false); S.choiceOpen = false; S.choiceSig = ''; } return; }
   const sig = JSON.stringify(p.ch) + p.rr;
   if (sig === S.choiceSig) return;
   S.choiceSig = sig; S.choiceOpen = true;
-  UI.showChoices(p.ch, p.rr, pickChoice, () => { sfx('ui'); if (S.guest) S.guest.send({ t: 'pick', idx: 'reroll' }); else choose(S.G, S.me, 'reroll'); }, () => pickChoice('skip'));
+  UI.showChoices(p.ch, p.rr, pickChoice, () => { sfx('ui'); if (S.guest) S.guest.send({ t: 'pick', idx: 'reroll' }); else choose(S.G, S.choiceFor || S.me, 'reroll'); }, () => pickChoice('skip'));
+  if (S.local) { $('choiceTitle').textContent = `P${p.slot + 1}（${p.name}）: ` + $('choiceTitle').textContent; S.cardFocus = 0; focusCard(); }
 }
+function focusCard() { const cs = $('cards').querySelectorAll('.card'); cs.forEach((c, i) => c.classList.toggle('focus', i === S.cardFocus)); }
 function openShop(v) {
-  const p = v.players.find((q) => q.id === S.me);
+  const who = S.local ? S.shopFor : S.me;
+  const p = v.players.find((q) => q.id === who);
   S.shopOpen = true;
-  UI.showShop(v.shop, S.me, p.gold, (i) => { if (S.guest) S.guest.send({ t: 'buy', i }); else buy(S.G, S.me, i); setTimeout(() => S.shopOpen && openShop(S.lastView), 120); });
+  UI.showShop(v.shop, who, p.gold, (i) => { if (S.guest) S.guest.send({ t: 'buy', i }); else buy(S.G, who, i); setTimeout(() => S.shopOpen && openShop(S.lastView), 120); });
+  $('shopWho').innerHTML = S.local ? v.players.map((q) => `<button data-id="${q.id}" aria-pressed="${q.id === who}">P${q.slot + 1} ${escapeHtml(q.name)}</button>`).join('') : '';
+  $('shopWho').querySelectorAll('button').forEach((b) => (b.onclick = () => { S.shopFor = b.dataset.id; openShop(S.lastView); }));
 }
 function closeShop() { S.shopOpen = false; UI.show('shop', false); }
 $('btnShopClose').onclick = closeShop;
@@ -360,8 +474,13 @@ function frame(now) {
     // ソロとホスト：計算する
     acc += dt;
     let n = 0;
+    S.padState = {}; for (const g of pads()) S.padState[g.index] = padState(g);
+    handlePadUi();
+    const localIn = [];
+    for (let i = 1; i < S.local; i++) localIn[i] = localInput(i, S.padState);
     while (acc >= STEP && n < 6) {
       const inputs = { [S.me]: readInput() };
+      for (let i = 1; i < S.local; i++) { inputs['p' + i] = localIn[i]; if (n === 0 && localIn[i].use) { S.shopFor = 'p' + i; latch.use = true; } localIn[i] = { ...localIn[i], dash: false }; }
       if (S.host) for (const id in hostInputs) inputs[id] = hostInputs[id];
       step(S.G, STEP, inputs);
       clearLatch();
@@ -383,6 +502,8 @@ function frame(now) {
     }
   } else if (S.guest) {
     // ゲスト：入力を送り、届いた絵をなめらかにつなぐ
+    S.padState = {}; for (const g of pads()) S.padState[g.index] = padState(g);
+    handlePadUi();
     S.inT += dt;
     if (S.inT > 1 / 30) { S.inT = 0; S.guest.send({ t: 'in', ...readInput() }); clearLatch(); }
     view = guestView(now);
@@ -395,10 +516,10 @@ function frame(now) {
   const p = view.players.find((q) => q.id === S.me);
   syncChoice(p);
   // 商人
-  const nearShop = view.shop && p && view.props.some((pr) => pr.m === 'merchant' && Math.hypot(pr.x - p.x, pr.y - p.y) < 50);
+  const nearShop = view.shop && view.players.some((q) => (S.local || q.id === S.me) && view.props.some((pr) => pr.m === 'merchant' && Math.hypot(pr.x - q.x, pr.y - q.y) < 50));
   $('hint').classList.toggle('hidden', !nearShop || S.shopOpen);
   if (nearShop) $('hint').textContent = isTouch ? '「調べる」で商人と話す' : 'E で商人と話す';
-  if (nearShop && latch.use) { openShop(view); latch.use = false; }
+  if (nearShop && latch.use) { if (!S.local) S.shopFor = S.me; openShop(view); latch.use = false; }
   if (!nearShop && S.shopOpen) closeShop();
   if (S.shopOpen) $('shopGold').textContent = '🪙 ' + (p ? p.gold : 0);
   // 見つけた魔法を魔導書に書く
@@ -409,6 +530,21 @@ function frame(now) {
 }
 
 // ゲストの補間
+// ゲームパッドでカードや一時停止を操作する
+function handlePadUi() {
+  for (const k in S.padState) {
+    const st = S.padState[k];
+    if (st.start) togglePause();
+    if (S.choiceOpen) {
+      const cs = $('cards').querySelectorAll('.card');
+      if (st.left) { S.cardFocus = ((S.cardFocus || 0) - 1 + cs.length) % cs.length; focusCard(); }
+      if (st.right) { S.cardFocus = ((S.cardFocus || 0) + 1) % cs.length; focusCard(); }
+      if (st.pick && cs[S.cardFocus || 0]) cs[S.cardFocus || 0].click();
+      st.dash = false;
+    }
+  }
+}
+
 function guestView(now) {
   const sn = S.snaps; if (!sn.length) return null;
   const b = sn[sn.length - 1], a = sn.length > 1 ? sn[sn.length - 2] : b;

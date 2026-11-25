@@ -307,6 +307,7 @@ export class Renderer {
     const p = view.players.find((q) => q.id === me) || view.players[0];
     const rw = view.w, rh = view.h * SQ;
     let fx0 = p ? p.x : rw / 2, fy0 = p ? p.y : view.h / 2;
+    if (this.followIds) { const qs = view.players.filter((q) => this.followIds.includes(q.id) && !q.dead); if (qs.length) { fx0 = qs.reduce((a, q) => a + q.x, 0) / qs.length; fy0 = qs.reduce((a, q) => a + q.y, 0) / qs.length; } }
     const boss = view.enemies.find((e) => e.bo);
     if (boss && p) { fx0 += (boss.x - p.x) * 0.3; fy0 += (boss.y - p.y) * 0.3; }
     let tx = fx0 - W / 2, ty = fy0 * SQ - H / 2 - 6;
@@ -339,7 +340,7 @@ export class Renderer {
     for (const k of view.pickups) { const d = this.pickupDraw(g, k, X, Y); if (d) L.push({ y: k.y, d }); }
     for (const e of view.enemies) L.push({ y: e.y, d: () => this.drawEnemy(g, e, X, Y) });
     for (const s of view.summons) L.push({ y: s.y, d: () => this.drawSummon(g, s, X, Y) });
-    for (const q of view.players) L.push({ y: q.y, d: () => this.drawPlayer(g, q, X, Y, q.id === me, view.players.length > 1) });
+    for (const q of view.players) L.push({ y: q.y, d: () => this.drawPlayer(g, q, X, Y, q.id === me || (this.followIds && this.followIds.includes(q.id)), view.players.length > 1) });
     L.sort((a, b) => a.y - b.y);
     for (const o of L) o.d();
 

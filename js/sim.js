@@ -18,13 +18,13 @@ const FX_LEAD = { smite: 0.42, holyPillar: 0.25, lightningStrike: 0.3, starFall:
 export const XP_NEXT = (lv) => Math.round(9 + lv * 7 + lv * lv * 0.7);
 export const PCOLORS = ['#8a7cff', '#ff6a7a', '#5ad890', '#ffd24a'];
 
-export function createGame({ players, diff = 1, meta = {} }) {
+export function createGame({ players, diff = 1, meta = {}, local = false }) {
   const G = {
     t: 0, nextId: 1, events: [], diff: DIFFS[diff] || DIFFS[1], diffIdx: diff,
     floor: 0, room: 0, roomType: 'start', biome: BIOMES[0], depth: 0,
     phase: 'pick', phaseT: 0, w: 640, h: 420, obstacles: [], props: [],
     players: [], enemies: [], shots: [], bullets: [], zones: [], strikes: [], summons: [], mines: [], pickups: [], teles: [], scripts: [], exits: [],
-    waves: null, boss: null, timeStop: 0, kills: 0, crystals: 0, shake: 0, paused: false, over: false, won: false, shop: null,
+    waves: null, boss: null, timeStop: 0, local, kills: 0, crystals: 0, shake: 0, paused: false, over: false, won: false, shop: null,
   };
   players.forEach((pl, i) => G.players.push(newPlayer(G, pl, i, meta)));
   for (const p of G.players) offerStart(G, p);
@@ -827,7 +827,7 @@ export function step(G, dt, inputs) {
   if (G.phase === 'pick') { if (G.players.every((p) => !p.choices && p.spells.length)) { G.phase = 'go'; } else return; }
   if (G.phase === 'go') { G.floor = 0; G.room = 1; G.depth = 0; G.biome = BIOMES[0]; enterRoom(G, 'fight', 'spell'); return; }
   if (G.paused) return;
-  if (solo && choosing) return;   // ソロは選んでいる間は止まる
+  if ((solo || G.local) && choosing) return;   // ソロと同じ画面のときは、選んでいる間は止まる
   G.t += dt;
   G.shake = Math.max(0, G.shake - dt * 2);
 
@@ -950,6 +950,14 @@ function updatePlayer(G, p, dt, inp) {
     }
   }
   collideWorld(G, { ...p, r: 6 }); { const q = { x: p.x, y: p.y, r: 6 }; collideWorld(G, q); p.x = q.x; p.y = q.y; }
+  // 同じ画面のときは、全員が画面に入るように離れすぎない
+  if (G.local) {
+    const others = G.players.filter((q) => q !== p && !q.dead);
+    if (others.length) {
+      const cx = others.reduce((a, q) => a + q.x, 0) / others.length, cy = others.reduce((a, q) => a + q.y, 0) / others.length;
+      p.x = clamp(p.x, cx - 180, cx + 180); p.y = clamp(p.y, cy - 150, cy + 150);
+    }
+  }
   if (ml > 0.1) p.walk += dt * 10;
   // 向き
   const live = G.enemies.filter((e) => e.hp > 0 && e.spawnT <= 0.2);

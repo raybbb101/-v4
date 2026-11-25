@@ -84,7 +84,7 @@ export function hud(view, me, opts) {
   if ($('relicRow').dataset.sig !== rsig) { $('relicRow').dataset.sig = rsig; $('relicRow').innerHTML = p.relics.map((r) => `<span class="relic" title="${esc(RELIC[r].name)}：${esc(RELIC[r].desc)}">${RELIC[r].glyph}</span>`).join(''); }
   // 仲間
   const others = view.players.filter((q) => q.id !== me);
-  $('allies').innerHTML = others.map((q) => `<div class="ally"><span style="color:${['#8a7cff', '#ff6a7a', '#5ad890', '#ffd24a'][q.slot % 4]}">${esc(q.name)}</span><div class="bar hp"><div style="width:${100 * Math.max(0, q.hp) / q.mhp}%"></div></div>${q.dead ? '<span>💀</span>' : ''}</div>`).join('');
+  $('allies').innerHTML = others.map((q) => `<div class="ally"><span style="color:${['#8a7cff', '#ff6a7a', '#5ad890', '#ffd24a'][q.slot % 4]}">${esc(q.name)} Lv${q.lv}</span><div class="bar hp"><div style="width:${100 * Math.max(0, q.hp) / q.mhp}%"></div></div>${q.dead ? '<span>💀</span>' : ''}<span class="allySlots">${q.spells.map((s) => `<img src="${spellIcon(s[0], s[1])}" class="${s[2] > 0 ? 'cd' : ''}" alt="">`).join('')}</span></div>`).join('');
   // ボス
   $('hud').classList.toggle('boss', !!view.boss);
   if (view.boss) { show('bossBar'); $('bossName').textContent = view.boss.name + (view.boss.p2 ? ' 〈本気〉' : ''); $('bossFill').style.width = (100 * view.boss.hp / view.boss.mhp) + '%'; }

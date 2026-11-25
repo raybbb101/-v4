@@ -175,3 +175,24 @@ h1 .en { font-family: var(--pix); font-size: 12px; color: var(--dim); letter-spa
   .card .tiers { display: none; }
   #topCenter { top: 100px; }
 }
+
+/* ---------- 同じ Wi-Fi・同じ画面 ---------- */
+.cols { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; width: min(1000px, 100%); }
+.cols .panel { flex: 1 1 320px; width: auto; }
+.panel h3 { margin: 0; font-family: var(--pix); font-weight: 400; font-size: 20px; }
+.panel h3 small { font-size: 12px; color: var(--dim); }
+.step { display: flex; flex-direction: column; gap: 6px; padding: 10px; background: #120e24; border: 1px solid var(--line); }
+.step b { font-family: var(--pix); font-weight: 400; color: var(--acc); }
+textarea { font-family: monospace; font-size: 11px; color: var(--ink); background: #0c0818; border: 2px solid var(--line); padding: 6px; resize: vertical; width: 100%; word-break: break-all; -webkit-user-select: text; user-select: text; }
+pre { background: #0c0818; border: 1px solid var(--line); padding: 8px 12px; margin: 0; font-size: 15px; color: var(--cyan); -webkit-user-select: text; user-select: text; }
+.urls { font-family: var(--pix); font-size: 20px; color: var(--acc); display: flex; flex-direction: column; gap: 4px; -webkit-user-select: text; user-select: text; }
+#directBox { display: flex; flex-direction: column; gap: 8px; }
+#directBox.hidden { display: none; }
+#localPads { width: min(560px, 100%); font-size: 14px; line-height: 1.7; }
+#localPads .pl { display: flex; gap: 10px; align-items: center; }
+#localPads .pl b { font-family: var(--pix); min-width: 2.5em; }
+#wifiStatus { min-height: 1.2em; color: var(--acc); }
+.allySlots { display: flex; gap: 2px; }
+.allySlots img { width: 16px; height: 16px; image-rendering: pixelated; }
+.allySlots img.cd { opacity: .35; }
+.card.focus { transform: translateY(-4px); box-shadow: 0 0 0 3px #fff, 0 0 20px var(--tc); }
