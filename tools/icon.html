@@ -1,0 +1,20 @@
+<!doctype html><meta charset=utf-8><body style="margin:0;background:transparent"><canvas id=c></canvas>
+<script type=module>
+import { drawModel } from '../js/stack.js';
+import '../js/models.js';
+const q = new URLSearchParams(location.search), S = +(q.get('s') || 512), mask = q.get('m') === '1';
+const c = document.getElementById('c'); c.width = c.height = S;
+const g = c.getContext('2d');
+const low = document.createElement('canvas'); low.width = low.height = 64; const l = low.getContext('2d');
+const gr = l.createRadialGradient(32, 26, 4, 32, 32, 40); gr.addColorStop(0, '#5a2ec0'); gr.addColorStop(0.6, '#1e1440'); gr.addColorStop(1, '#0b0914');
+l.fillStyle = gr; l.fillRect(0, 0, 64, 64);
+l.fillStyle = 'rgba(198,132,255,0.35)'; l.beginPath(); l.ellipse(32, 50, 20, 6, 0, 0, 6.3); l.fill();
+l.strokeStyle = '#ffc23d'; l.beginPath(); l.ellipse(32, 50, 22, 7, 0, 0, 6.3); l.stroke();
+drawModel(l, 'mage0', 32, 50, 0.5, {});
+for (const [x, y] of [[12, 14], [52, 10], [48, 24], [10, 34]]) { l.fillStyle = '#fff0a0'; l.fillRect(x, y, 1, 1); }
+g.imageSmoothingEnabled = false;
+const pad = mask ? S * 0.12 : 0;
+g.fillStyle = '#0b0914'; g.fillRect(0, 0, S, S);
+g.drawImage(low, pad, pad, S - pad * 2, S - pad * 2);
+document.title = 'done';
+</script>

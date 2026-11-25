@@ -1,0 +1,22 @@
+<!doctype html><meta charset=utf-8><body style="margin:0;background:#222"><canvas id=c style="image-rendering:pixelated;width:1200px"></canvas><pre id=log style="color:#f88"></pre>
+<script type=module>
+import { createFrame, clearFrame, createFx, composite } from '../pixelfx/src/core/index.js';
+import { BODY } from '../js/render.js';
+import * as F from '../js/fxmods.js';
+const names = ['heal','blessing','resurrection','haste','forceField','divineShield','scanner','chargeUp','electrified','levelUp','rage','frozen','rootSnare','blinkIn','blinkOut','warpIn','warpOut','soulRise','fireRing','frostNova','leafStorm','shieldBlock','burning','poisoned','stunned'];
+const W = 100, H = 90, cols = 8, rows = Math.ceil(names.length / cols);
+const c = document.getElementById('c'); c.width = W * cols; c.height = H * rows; const g = c.getContext('2d');
+const fr = createFrame(c.width, c.height), img = new ImageData(c.width, c.height);
+const log = [];
+names.forEach((n, i) => {
+  try {
+    const m = F[n]; const fx = createFx(m, { x: (i % cols) * W + W / 2, y: Math.floor(i / cols) * H + H - 12, actor: BODY });
+    for (let k = 0; k < 30; k++) fx.update(m.meta.duration * 0.4 / 30);
+    fx.draw(fr);
+  } catch (e) { log.push(n + ': ' + e.message); }
+});
+composite(fr, img.data, 0xff2a2030); g.putImageData(img, 0, 0);
+g.fillStyle = '#fff'; g.font = '9px monospace'; names.forEach((n, i) => g.fillText(n, (i % cols) * W + 2, Math.floor(i / cols) * H + 10));
+document.getElementById('log').textContent = log.join('\n');
+document.title = 'done';
+</script>

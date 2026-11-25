@@ -1,0 +1,12 @@
+<!doctype html><meta charset=utf-8><body style="margin:0;background:#1a1826"><canvas id=c></canvas>
+<script type=module>
+import { drawModel, allModelIds, TAU } from '../js/stack.js';
+import '../js/models.js';
+const ids = allModelIds(), cols = 8, cw = 70, ch = 80, rows = Math.ceil(ids.length / cols);
+const c = document.getElementById('c'); c.width = cols * cw; c.height = rows * ch;
+const g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+g.fillStyle = '#2a2838'; g.fillRect(0, 0, c.width, c.height);
+const ang = +(new URLSearchParams(location.search).get('a') || 0.6);
+ids.forEach((id, i) => { const x = (i % cols) * cw + cw / 2, y = Math.floor(i / cols) * ch + ch - 14; drawModel(g, id, x, y, ang); g.fillStyle = '#aaa'; g.font = '8px monospace'; g.fillText(id, x - cw / 2 + 2, y + 11); });
+document.title = 'done';
+</script>

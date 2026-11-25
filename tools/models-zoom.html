@@ -1,0 +1,11 @@
+<!doctype html><meta charset=utf-8><body style="margin:0;background:#1a1826"><canvas id=c style="image-rendering:pixelated"></canvas>
+<script type=module>
+import { drawModel } from '../js/stack.js';
+import '../js/models.js';
+const q = new URLSearchParams(location.search), ids = (q.get('ids') || 'mage0').split(','), S = +(q.get('s') || 4);
+const angs = [0, 0.8, 1.6, 2.4, 3.2, 4.7];
+const c = document.getElementById('c'); const cw = 64, ch = 70; c.width = cw * angs.length; c.height = ch * ids.length;
+c.style.width = c.width * S + 'px';
+const g = c.getContext('2d'); g.fillStyle = '#2a2838'; g.fillRect(0, 0, c.width, c.height);
+ids.forEach((id, j) => angs.forEach((a, i) => drawModel(g, id, i * cw + cw / 2, j * ch + ch - 6, a, { frame: i % 2 })));
+</script>
