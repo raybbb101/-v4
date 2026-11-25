@@ -352,7 +352,7 @@ function drawTitle(dt) {
 let last = performance.now(), acc = 0, snapAcc = 0, hostEv = [], seenT = 0;
 const STEP = 1 / 60;
 function frame(now) {
-  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  const dt = Math.max(0, Math.min(0.1, (now - last) / 1000)); last = now;
   if (S.mode === 'title' || S.mode === 'lobby') { drawTitle(dt); requestAnimationFrame(frame); return; }
   if (S.mode !== 'play') { requestAnimationFrame(frame); return; }
   let view = null;

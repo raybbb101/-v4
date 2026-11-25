@@ -308,7 +308,7 @@ function entry(M, f, b) {
 export function drawModel(ctx, id, x, y, ang, o = {}) {
   const M = MODELS[id]; if (!M) return;
   ensureFrames(M);
-  const f = (o.frame ?? 0) % M.F, b = bucketOf(ang), e = entry(M, f, b);
+  const f = ((Math.floor(o.frame || 0) % M.F) + M.F) % M.F, b = bucketOf(ang || 0), e = entry(M, f, b);
   const sx = o.sx ?? 1, sy = o.sy ?? 1, lift = o.lift ?? 0;
   const dx = Math.round(x - e.cx * sx), dy = Math.round(y - lift - e.cy * sy);
   let img = e.art;
