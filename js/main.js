@@ -330,7 +330,7 @@ $('crystalCount').textContent = save.crystals;
 const title = { cv: $('titleArt'), t: 0, fx: [] };
 function drawTitle(dt) {
   const cv = title.cv, W = 240, H = 135;
-  if (cv.width !== W) { cv.width = W; cv.height = H; title.frame = createFrame(W, H); title.img = new ImageData(W, H); title.tmp = document.createElement('canvas'); title.tmp.width = W; title.tmp.height = H; title.fx = [createFx(F.runeCircle, { x: 120, y: 98, palette: PALS.arcane }), createFx(F.sunOrb, { x: 200, y: 26, palette: PALS.violet })]; }
+  if (cv.width !== W) { cv.width = W; cv.height = H; title.frame = createFrame(W, H); title.img = new ImageData(W, H); title.tmp = document.createElement('canvas'); title.tmp.width = W; title.tmp.height = H; title.fx = [createFx(F.runeCircle, { x: 120, y: 98, palette: PALS.arcane }), createFx(F.plasmaBall, { x: 200, y: 30, palette: PALS.violet })]; }
   title.t += dt;
   const g = cv.getContext('2d');
   g.setTransform(1, 0, 0, 1, 0, 0);

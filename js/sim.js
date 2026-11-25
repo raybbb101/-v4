@@ -47,7 +47,7 @@ export function stats(p) {
   const s = { power: 1 + p.metaPow, speed: 1 + p.metaSpd, cdr: 0, area: 1, lifesteal: 0, crit: 0.05, regen: 0, extra: 0, pickup: 1, luck: 0, gold: 1 + p.metaGold, revive: 0,
     procShock: 0, procSlow: 0, procBurn: 0, aegis: 0, berserk: 0, summon: 1, pierce: 0, dodge: 0, shotSpd: 1, ultCdr: 0, armor: 0, thorns: 0, basic: 0, maxHp: 0, dmgUp: 0, invuln: 0 };
   for (const id of p.relics) { const m = RELIC[id].mod; for (const k in m) s[k] = (s[k] || 0) + (k === 'area' || k === 'speed' || k === 'power' || k === 'pickup' || k === 'gold' || k === 'summon' || k === 'shotSpd' ? m[k] : m[k]); }
-  for (const b of p.buffs) { if (b.haste) s.speed += b.haste; if (b.cdr) s.cdr += b.cdr; if (b.dmgUp) s.dmgUp += b.dmgUp; if (b.invuln) s.invuln = 1; }
+  for (const b of p.buffs) { if (b.haste) s.speed += b.haste; if (b.cdr) s.cdr += b.cdr; if (b.dmgUp) s.dmgUp += b.dmgUp; if (b.crit) s.crit += b.crit; if (b.invuln) s.invuln = 1; }
   if (s.berserk && p.hp < p.maxHp * 0.5) s.dmgUp += s.berserk;
   s.cdr = Math.min(0.8, s.cdr);
   return s;
@@ -161,7 +161,8 @@ function spawnWave(G) {
 }
 
 function targetsFor(G) {
-  const t = G.players.filter((p) => !p.dead);
+  const t = G.players.filter((p) => !p.dead && !p.buffs.some((b) => b.stealth));
+  if (!t.length) for (const p of G.players) if (!p.dead) t.push({ x: p.x + 200, y: p.y, fake: true });
   for (const s of G.summons) if (s.type === 'decoy') t.push(s);
   return t;
 }
@@ -202,7 +203,19 @@ function updateEnemy(G, e, dt) {
   else switch (D.ai) {
     case 'chase': case 'swarm': {
       const w = D.ai === 'swarm' ? Math.sin(G.t * 5 + e.wob) * 0.9 : 0;
-      mx = Math.cos(ang + w); my = Math.sin(ang + w); break;
+      mx = Math.cos(ang + w); my = Math.sin(ang + w);
+      if (D.web && Math.random() < dt * 2) G.zones.push(enemyZone(G, e.x, e.y, 18, 4, 'slime'));
+      break;
+    }
+    case 'roller': {
+      // 一直線に転がり、壁と物にぶつかると跳ね返る。ときどき狙い直す
+      if (e.rollA == null || e.cd <= 0) { e.rollA = ang + rnd(-0.3, 0.3); e.cd = rnd(2.5, 4); }
+      const sp = D.roll / e.spd; mx = Math.cos(e.rollA) * sp; my = Math.sin(e.rollA) * sp;
+      const px = e.x, py = e.y;
+      if (px < 30 || px > G.w - 30) e.rollA = Math.PI - e.rollA;
+      if (py < 36 || py > G.h - 28) e.rollA = -e.rollA;
+      for (const ob of G.obstacles) if (dist2(ob, e) < (ob.r + e.r + 2) ** 2) { e.rollA = angTo(ob, e) + rnd(-0.4, 0.4); break; }
+      break;
     }
     case 'shooter': {
       const R = D.range || 180;
@@ -218,7 +231,7 @@ function updateEnemy(G, e, dt) {
     }
     case 'charger': {
       if (e.state === 'wind') { e.stT -= dt; if (e.stT <= 0) { e.state = 'dash'; e.stT = D.charge.dur; e.dashA = e.lockA; sfx(G, 'whoosh', e.x, e.y); } }
-      else if (e.state === 'dash') { e.stT -= dt; mx = Math.cos(e.dashA) * D.charge.spd / e.spd; my = Math.sin(e.dashA) * D.charge.spd / e.spd; if (D.web && Math.random() < dt * 8) G.zones.push(enemyZone(G, e.x, e.y, 20, 3, 'web')); if (e.stT <= 0) { e.state = 'move'; e.cd = D.charge.cd; } }
+      else if (e.state === 'dash') { e.stT -= dt; mx = Math.cos(e.dashA) * D.charge.spd / e.spd; my = Math.sin(e.dashA) * D.charge.spd / e.spd; if (D.web && Math.random() < dt * 8) G.zones.push(enemyZone(G, e.x, e.y, 20, 3, 'web')); if (e.stT <= 0) { e.state = 'move'; e.cd = D.charge.cd; if (D.shot) shootPattern(G, e, angTo(e, tgt)); } }
       else {
         mx = Math.cos(ang); my = Math.sin(ang);
         if (e.cd <= 0 && d < 170) { e.state = 'wind'; e.stT = 0.55; e.lockA = ang; tele(G, { kind: 'line', x: e.x, y: e.y, ang, len: D.charge.spd * D.charge.dur, w: e.r * 2 + 4, t: 0.55, dmg: 0, follow: e.id }); }
@@ -486,7 +499,7 @@ function shot(G, p, sp, ang, o = {}) {
   const sh = {
     id: G.nextId++, owner: p.id, k: sp.fx, x: p.x + Math.cos(ang) * 10, y: p.y + Math.sin(ang) * 10, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, a: ang,
     r: 6 + (sp.size || 0) * 0.5, dmg: sp.dmg, pierce: (sp.pierce || 0) + s.pierce, hit: new Set(), life: sp.life || (sp.boomerang ? sp.boomerang * 2 : 1.6), t: 0,
-    boom: (sp.boom || 0) * s.area, boomFx: sp.boomFx, home: sp.home || 0, st: sp.st, knock: sp.knock, hitFx: sp.hit, boomerang: sp.boomerang, pal: sp.pal, pull: sp.pull, lifesteal: sp.lifesteal,
+    boom: (sp.boom || 0) * s.area, boomFx: sp.boomFx, home: sp.home || 0, st: sp.st, knock: sp.knock, hitFx: sp.hit, boomerang: sp.boomerang, pal: sp.pal, pull: sp.pull, lifesteal: sp.lifesteal, bounce: sp.bounce || 0, split: sp.split || 0,
     ...o,
   };
   G.shots.push(sh);
@@ -514,7 +527,7 @@ function castSpell(G, p, slot, inp) {
     case 'nova': {
       const reps = sp.n || 1;
       for (let k = 0; k < reps; k++) G.scripts.push({ t: k * (sp.interval || 0), fn: () => {
-        fx(G, sp.fx, p.x, p.y, { scale: sp.rad * area / 100 });
+        fx(G, sp.fx, p.x, p.y, { scale: sp.rad * area / 100, pal: sp.pal });
         const n = boomAt(G, p.x, p.y, sp.rad * area, sp.dmg, 'player', p.id, { knock: sp.knock, st: sp.st, lifesteal: sp.lifesteal });
         if (sp.clearBullets) G.bullets = G.bullets.filter((b) => (b.x - p.x) ** 2 + (b.y - p.y) ** 2 > (sp.rad * area) ** 2);
         if (sp.heal) for (const q of G.players) healPlayer(G, q, sp.heal);
@@ -533,7 +546,7 @@ function castSpell(G, p, slot, inp) {
         else { x = aim.x; y = aim.y; }
         x = clamp(x, 10, G.w - 10); y = clamp(y, 16, G.h - 10);
         const t = delay + k * (sp.interval || 0);
-        G.strikes.push({ t, x, y, r: sp.rad * area, dmg: sp.dmg, fx: sp.fx, st: sp.st, owner: p.id, knock: sp.knock, lob: sp.lob ? { x0: p.x, y0: p.y, T: t } : null, fxDone: false, mark: delay > 0.3 });
+        G.strikes.push({ t, x, y, r: sp.rad * area, dmg: sp.dmg, fx: sp.fx, st: sp.st, owner: p.id, knock: sp.knock, pal: sp.pal, fxDone: false, mark: delay > 0.3 });
       }
       sfx(G, 'cast', p.x, p.y);
       break;
@@ -555,8 +568,8 @@ function castSpell(G, p, slot, inp) {
       break;
     }
     case 'zone': {
-      const at = sp.at === 'target' ? aim : { x: p.x, y: p.y };
-      const z = { id: G.nextId++, owner: p.id, k: sp.fx, x: at.x, y: at.y, r: sp.rad * area, dur: sp.dur, t: 0, tick: sp.tick, tt: 0, dmg: sp.dmg, st: sp.st, pull: sp.pull, follow: sp.at === 'follow' ? p.id : null, endBoom: sp.endBoom, cover: sp.cover };
+      const at = sp.at === 'target' ? aim : sp.at === 'dense' ? aimPoint(G, p, { target: 'dense' }, inp) : { x: p.x, y: p.y };
+      const z = { id: G.nextId++, owner: p.id, k: sp.fx, x: at.x, y: at.y, r: sp.rad * area, dur: sp.dur, t: 0, tick: sp.tick, tt: 0, dmg: sp.dmg, st: sp.st, pull: sp.pull, follow: sp.at === 'follow' ? p.id : null, endBoom: sp.endBoom, cover: sp.cover, healTick: sp.healTick, revive: sp.revive, lifesteal: sp.lifesteal, pal: sp.pal };
       if (sp.move) { z.vx = Math.cos(ang) * sp.move; z.vy = Math.sin(ang) * sp.move; }
       G.zones.push(z);
       sfx(G, 'zone', at.x, at.y);
@@ -574,6 +587,9 @@ function castSpell(G, p, slot, inp) {
         const a = i / n * TAU;
         const sm = { id: G.nextId++, owner: p.id, type: sp.type, x: p.x + Math.cos(a) * 20, y: p.y + Math.sin(a) * 20, off: a, life: sp.dur * s.summon, t: 0, cd: 0.3 + i * 0.1, rate: sp.rate, dmg: sp.dmg * s.summon, range: sp.range, missile: sp.missile, boom: sp.boom, shoot: sp.shoot, r: 6, hp: 9999 };
         if (sp.type === 'decoy') { const t2 = aimPoint(G, p, sp, inp, 120); sm.x = clamp(t2.x + Math.cos(a) * 30 * (n > 1), 30, G.w - 30); sm.y = clamp(t2.y + Math.sin(a) * 30 * (n > 1), 40, G.h - 30); fx(G, 'warpIn', sm.x, sm.y); }
+        if (sp.type === 'turret') { const a2 = (i / Math.max(1, n)) * TAU; sm.x = clamp(p.x + Math.cos(a2) * (n > 1 ? 40 : 24), 30, G.w - 30); sm.y = clamp(p.y + Math.sin(a2) * (n > 1 ? 40 : 24), 40, G.h - 30); fx(G, 'warpIn', sm.x, sm.y); }
+        if (sp.type === 'hound') { sm.stun = sp.stun; fx(G, 'summonPoof', sm.x, sm.y); }
+        if (sp.doll) sm.doll = true;
         if (sp.type === 'tesla') { sm.x = clamp(aim.x, 30, G.w - 30); sm.y = clamp(aim.y, 40, G.h - 30); fx(G, 'lightningStrike', sm.x, sm.y); }
         G.summons.push(sm);
       }
@@ -586,7 +602,7 @@ function castSpell(G, p, slot, inp) {
         if (q.dead && sp.revive) { q.dead = false; q.hp = 1; fx(G, 'resurrection', q.x, q.y); toast(G, `${q.name}が生き返った！`); }
         if (sp.heal) healPlayer(G, q, sp.heal);
         if (sp.shield) q.shield = Math.max(q.shield, sp.shield);
-        if (sp.dur) q.buffs.push({ t: sp.dur, haste: sp.haste, cdr: sp.cdr, dmgUp: sp.dmgUp, invuln: sp.invuln ? 1 : 0, regen: sp.regen, aura: sp.aura, auraRad: sp.auraRad, k: own.id });
+        if (sp.dur) q.buffs.push({ t: sp.dur, haste: sp.haste, cdr: sp.cdr, dmgUp: sp.dmgUp, crit: sp.crit, invuln: sp.invuln ? 1 : 0, regen: sp.regen, aura: sp.aura, auraRad: sp.auraRad, ls: sp.lifestealAura, stealth: sp.stealth, k: own.id });
         if (sp.invuln) q.buffs.push({ t: sp.invuln, invuln: 1, k: 'inv' });
         fx(G, sp.fx, q.x, q.y, { follow: q.id });
       }
@@ -607,7 +623,7 @@ function castSpell(G, p, slot, inp) {
       break;
     }
     case 'mine': {
-      for (let i = 0; i < sp.n; i++) G.mines.push({ id: G.nextId++, owner: p.id, x: clamp(p.x + (i ? rnd(-sp.scatter, sp.scatter) : 0), 20, G.w - 20), y: clamp(p.y + (i ? rnd(-sp.scatter, sp.scatter) : 0), 26, G.h - 20), arm: 0.5, dmg: sp.dmg, r: sp.rad * area });
+      for (let i = 0; i < sp.n; i++) G.mines.push({ id: G.nextId++, owner: p.id, x: clamp(p.x + (i ? rnd(-sp.scatter, sp.scatter) : 0), 20, G.w - 20), y: clamp(p.y + (i ? rnd(-sp.scatter, sp.scatter) : 0), 26, G.h - 20), arm: 0.5, dmg: sp.dmg, r: sp.rad * area, st: sp.st, boomFx: sp.boomFx });
       sfx(G, 'click', p.x, p.y);
       break;
     }
@@ -653,72 +669,68 @@ function castUlt(G, p, sp, aim) {
   const live = () => G.enemies.filter((e) => e.hp > 0 && e.spawnT <= 0.2);
   const dmg = sp.dmg * (1 + 0.1 * G.depth);
   switch (sp.ult) {
-    case 'crimson': {
-      at(0.35, () => { for (const e of live().slice(0, 30)) { fx(G, 'crimsonWrap', e.x, e.y, { follow: e.id }); applyStatus(e, { k: 'root', dur: 1.6 }); } sfx(G, 'flame'); });
-      at(1.7, () => { for (const e of live().slice(0, 30)) { fx(G, 'smallBoom', e.x, e.y, { palette: 'blood' }); hitEnemy(G, e, dmg * 1.6, p.id); applyStatus(e, { k: 'burn', dur: 4 }, p.id); } G.shake = 0.8; sfx(G, 'boom'); });
+    case 'pyrecage': {
+      // 焔獄の檻：すべての敵のまわりに炎の柱が立ち、閉じこめて焼く
+      at(0.3, () => { for (const e of live().slice(0, 24)) { applyStatus(e, { k: 'root', dur: 1.8 }); for (let k = 0; k < 3; k++) { const a = k / 3 * TAU; fx(G, 'flamePillarSmall', e.x + Math.cos(a) * 18, e.y + Math.sin(a) * 18); } } sfx(G, 'flame'); });
+      for (let k = 0; k < 4; k++) at(0.6 + k * 0.35, () => { for (const e of live()) { hitEnemy(G, e, dmg * 0.5, p.id, { noProc: true }); applyStatus(e, { k: 'burn', dur: 4 }, p.id); } });
+      at(2.1, () => { for (const e of live().slice(0, 24)) fx(G, 'smallBoom', e.x, e.y); boomAt(G, p.x, p.y, 9999, dmg, 'player', p.id); G.shake = 0.8; sfx(G, 'boom'); });
       break;
     }
-    case 'abszero': {
-      at(0.2, () => { ev(G, { e: 'screen', k: 'blizzard', dur: 3 }); fx(G, 'frostNovaBig', p.x, p.y); sfx(G, 'freeze'); });
-      at(0.6, () => { for (const e of live()) { applyStatus(e, { k: 'freeze', dur: 3.5 }); fx(G, 'freezeOn', e.x, e.y, { follow: e.id }); hitEnemy(G, e, dmg * 0.4, p.id); } G.bullets = []; });
-      at(1.8, () => { for (const e of live()) { fx(G, 'iceSpikesAt', e.x, e.y); hitEnemy(G, e, dmg * 1.4, p.id); } G.shake = 0.7; sfx(G, 'shatter'); });
+    case 'eclipse': {
+      // 月蝕：世界が闇に沈み、全ての敵が呪われ、闇が弾ける
+      at(0.1, () => { ev(G, { e: 'screen', k: 'dark', dur: 2.6 }); fx(G, 'eclipseFx', p.x, p.y - 60, {}); sfx(G, 'rumble'); });
+      at(0.8, () => { for (const e of live()) { applyStatus(e, { k: 'curse', dur: 8 }); fx(G, 'curseFx', e.x, e.y); } });
+      at(1.9, () => { for (const e of live()) { fx(G, 'darkPop', e.x, e.y); hitEnemy(G, e, dmg * 1.8, p.id); } G.shake = 0.9; sfx(G, 'boom'); });
       break;
     }
-    case 'frostinferno': {
-      at(0.2, () => { fx(G, 'frostNovaBig', p.x, p.y); for (const e of live()) { applyStatus(e, { k: 'freeze', dur: 1.4 }); fx(G, 'freezeOn', e.x, e.y, { follow: e.id }); } sfx(G, 'freeze'); });
-      at(1.4, () => { ev(G, { e: 'screen', k: 'flash', col: '#ff6a2a', dur: 0.3 }); for (const e of live()) { fx(G, 'iceShatter', e.x, e.y); fx(G, 'flamePillar', e.x, e.y); hitEnemy(G, e, dmg * 1.8, p.id); applyStatus(e, { k: 'burn', dur: 4 }, p.id); } G.shake = 0.9; sfx(G, 'boom'); });
-      break;
-    }
-    case 'yggdrasil': {
-      const tx = clamp(p.x, 60, G.w - 60), ty = clamp(p.y - 30, 60, G.h - 40);
-      at(0.1, () => { G.props.push({ model: 'worldtree', x: tx, y: ty, a: 0, grow: 0, life: 6, temp: true }); fx(G, 'healingBloomBig', tx, ty); sfx(G, 'rumble'); });
-      for (let k = 0; k < 3; k++) at(0.8 + k * 0.8, () => {
-        for (const e of live()) { fx(G, 'rootSnare', e.x, e.y); applyStatus(e, { k: 'root', dur: 1 }); hitEnemy(G, e, dmg * 0.7, p.id); }
-        for (const q of G.players) healPlayer(G, q, q.maxHp * 0.18);
-        G.shake = 0.4;
+    case 'dragon': {
+      // 龍王顕現：龍王が空を駆け抜け、通り道を炎の柱で焼く
+      const tg = aimPoint(G, p, { target: 'dense' }, null), ang = Math.atan2(tg.y - p.y, tg.x - p.x);
+      const x0 = p.x - Math.cos(ang) * 60, y0 = p.y - Math.sin(ang) * 60;
+      ev(G, { e: 'dragonFly', x0: Math.round(x0), y0: Math.round(y0), ang: +ang.toFixed(2), len: 900 });
+      for (let k = 0; k < 14; k++) at(0.2 + k * 0.06, () => {
+        const x = x0 + Math.cos(ang) * k * 48, y = y0 + Math.sin(ang) * k * 48;
+        if (x < 0 || y < 0 || x > G.w || y > G.h) return;
+        fx(G, 'flamePillarSmall', x, y); boomAt(G, x, y, 54, dmg, 'player', p.id, { st: { k: 'burn', dur: 4 }, knock: 80 });
+        if (k % 3 === 0) sfx(G, 'flame');
       });
-      at(3.3, () => { for (const e of live()) { fx(G, 'earthSpike', e.x, e.y); hitEnemy(G, e, dmg, p.id); } });
+      at(0.1, () => sfx(G, 'roar'));
       break;
     }
-    case 'overdrive': {
-      p.buffs.push({ t: 8, cdr: 0.7, haste: 0.35, dmgUp: 0.25, aura: dmg, auraRad: 80, k: 'overdrive' });
-      fx(G, 'chargeUp', p.x, p.y); fx(G, 'overdriveAura', p.x, p.y, { follow: p.id, life: 8 });
+    case 'truck': {
+      // 暴走トラック：画面の端から大型トラックが突っこむ
+      const tg = aimPoint(G, p, { target: 'dense' }, null), fromLeft = tg.x > G.w / 2 ? false : true;
+      const y = clamp(tg.y, 40, G.h - 30), dir = fromLeft ? 1 : -1;
+      const pr = { model: 'bigtruck', x: fromLeft ? -40 : G.w + 40, y, a: fromLeft ? 0 : Math.PI, grow: 1, temp: true, life: 3, vx: dir * 520, hit: new Set(), dmg, owner: p.id, ram: true };
+      G.props.push(pr); sfx(G, 'alarm');
       break;
     }
-    case 'singularity': {
+    case 'magstorm': {
+      // 磁気嵐：敵を一点に集め、レールガン 6 連射
       const c = aimPoint(G, p, { target: 'dense' }, null);
-      const z = { id: G.nextId++, owner: p.id, k: 'singularity', x: c.x, y: c.y, r: 170, dur: 2.2, t: 0, tick: 0.2, tt: 0, dmg: dmg * 0.15, pull: 220 };
-      G.zones.push(z);
-      at(2.2, () => { fx(G, 'implosion', c.x, c.y); });
-      at(2.5, () => { fx(G, 'novaBlast', c.x, c.y); ev(G, { e: 'screen', k: 'flash', col: '#ffffff', dur: 0.35 }); boomAt(G, c.x, c.y, 200, dmg * 3, 'player', p.id, { knock: 220 }); G.shake = 1.2; sfx(G, 'boom'); });
-      break;
-    }
-    case 'fairytide': {
-      at(0.1, () => { ev(G, { e: 'screen', k: 'fairies', dur: 3.2 }); });
-      for (let w = 0; w < 3; w++) {
-        const dir = w % 2 ? -1 : 1;
-        for (let k = 0; k <= 8; k++) at(0.5 + w * 0.9 + k * 0.07, () => {
-          const x = dir > 0 ? (k / 8) * G.w : G.w - (k / 8) * G.w;
-          for (let r = 0; r < 4; r++) fx(G, 'tide', x, (r + 0.7) * G.h / 4, { flip: dir < 0 });
-          for (const e of live()) if (Math.abs(e.x - x) < G.w / 16 + 8) { hitEnemy(G, e, dmg * 0.6, p.id, { knock: 140, ka: dir > 0 ? 0 : Math.PI }); applyStatus(e, { k: 'slow', dur: 2 }); }
-          if (k === 0) sfx(G, 'water');
-        });
-      }
-      at(3.2, () => { for (const q of G.players) healPlayer(G, q, 20); });
-      break;
-    }
-    case 'houyi': {
-      const suns = [];
-      for (let k = 0; k < 9; k++) { const sx = G.w * (0.1 + 0.8 * k / 8), sy = 30 + Math.sin(k / 8 * Math.PI) * -18 + 18; suns.push({ x: sx, y: sy }); }
-      at(0.2, () => { suns.forEach((s, k) => fx(G, 'sunOrb', s.x, s.y, { life: 0.9 + k * 0.22 })); ev(G, { e: 'screen', k: 'flash', col: '#ffb040', dur: 0.4 }); sfx(G, 'ult'); });
-      suns.forEach((s, k) => {
-        at(0.9 + k * 0.22, () => { ev(G, { e: 'arrowFly', x0: Math.round(p.x), y0: Math.round(p.y - 20), x1: Math.round(s.x), y1: Math.round(s.y) }); sfx(G, 'bow'); });
-        at(1.05 + k * 0.22, () => {
-          const L = live(); const t = L.length ? L[k % L.length] : { x: rnd(60, G.w - 60), y: rnd(60, G.h - 60) };
-          fx(G, 'sunShatter', s.x, s.y);
-          G.strikes.push({ t: 0.5, x: t.x, y: t.y, r: 64, dmg: dmg * 1.3, fx: 'meteorFire', st: { k: 'burn', dur: 4 }, owner: p.id, fxDone: false, mark: true });
-        });
+      G.zones.push({ id: G.nextId++, owner: p.id, k: 'gravWell', x: c.x, y: c.y, r: 220, dur: 1.6, t: 0, tick: 0.3, tt: 0, dmg: dmg * 0.1, pull: 260 });
+      for (let k = 0; k < 6; k++) at(1.2 + k * 0.16, () => {
+        const a = Math.atan2(c.y - p.y, c.x - p.x) + (k - 2.5) * 0.06, len = 700;
+        fx(G, 'railBeam', p.x, p.y, { angle: a, len });
+        for (const e of live()) if (segDist(e.x, e.y, p.x, p.y, p.x + Math.cos(a) * len, p.y + Math.sin(a) * len) < 14 + e.r) hitEnemy(G, e, dmg, p.id);
+        sfx(G, 'beam'); G.shake = 0.4;
       });
+      break;
+    }
+    case 'quantum': {
+      // 確率崩壊：3 度、ランダムな大ダメージが全員に
+      for (let k = 0; k < 3; k++) at(0.4 + k * 0.5, () => {
+        for (const e of live()) { const luck = Math.random(); fx(G, luck > 0.7 ? 'plasmaBoom' : 'quantumPop', e.x, e.y); hitEnemy(G, e, dmg * (0.4 + luck * 1.6), p.id); }
+        ev(G, { e: 'screen', k: 'flash', col: '#5affd8', dur: 0.15 }); sfx(G, 'zap');
+      });
+      break;
+    }
+    case 'omni': {
+      // 全知演算：魔法の待ちを消し、8 秒強化
+      for (const o of p.spells) if (o.id !== sp.id) o.cd = 0;
+      p.buffs.push({ t: 8, dmgUp: 0.5, crit: 0.35, cdr: 0.35, k: 'omni' });
+      fx(G, 'chargeUp', p.x, p.y); fx(G, 'scanner', p.x, p.y, { follow: p.id, life: 8 });
+      ev(G, { e: 'screen', k: 'flash', col: '#ffd24a', dur: 0.25 });
       break;
     }
     case 'timestop': {
@@ -845,7 +857,14 @@ export function step(G, dt, inputs) {
   updateSummons(G, dt);
   updateMines(G, dt);
   updatePickups(G, dt);
-  for (const pr of G.props) if (pr.temp) { pr.grow = Math.min(1, (pr.grow || 0) + dt * 1.5); pr.life -= dt; }
+  for (const pr of G.props) if (pr.temp) {
+    pr.grow = Math.min(1, (pr.grow || 0) + dt * 1.5); pr.life -= dt;
+    if (pr.vx) {
+      pr.x += pr.vx * dt;
+      if (pr.ram) for (const e of G.enemies) if (e.hp > 0 && !pr.hit.has(e.id) && Math.abs(e.x - pr.x) < 30 + e.r && Math.abs(e.y - pr.y) < 18 + e.r) { pr.hit.add(e.id); hitEnemy(G, e, pr.dmg, pr.owner, { knock: 320, ka: pr.vx > 0 ? -0.5 : Math.PI + 0.5 }); applyStatus(e, { k: 'stun', dur: 1.2 }); fx(G, 'cartoonPow', e.x, e.y); G.shake = Math.max(G.shake, 0.4); }
+      if (pr.x < -80 || pr.x > G.w + 80) pr.life = 0;
+    }
+  }
   G.props = G.props.filter((pr) => !pr.temp || pr.life > 0);
 
   if (G.phase === 'exits') updateExits(G, dt);
@@ -909,7 +928,7 @@ function updatePlayer(G, p, dt, inp) {
   for (const b of p.buffs) {
     b.t -= dt;
     if (b.regen) healPlayer(G, p, b.regen * dt, true);
-    if (b.aura) { b.at = (b.at || 0) - dt; if (b.at <= 0) { b.at = 0.35; for (const e of G.enemies) if (e.hp > 0 && dist2(e, p) < (b.auraRad + e.r) ** 2) { hitEnemy(G, e, b.aura * 0.35, p.id, { noProc: true }); if (b.k === 'overdrive' && Math.random() < 0.3) ev(G, { e: 'chain', pts: [{ x: Math.round(p.x), y: Math.round(p.y - 12) }, { x: Math.round(e.x), y: Math.round(e.y) }], pal: 'volt' }); } } }
+    if (b.aura) { b.at = (b.at || 0) - dt; if (b.at <= 0) { b.at = 0.35; for (const e of G.enemies) if (e.hp > 0 && dist2(e, p) < (b.auraRad + e.r) ** 2) { hitEnemy(G, e, b.aura * 0.35, p.id, { noProc: true, lifesteal: b.ls || 0 }); if (b.ls && Math.random() < 0.3) ev(G, { e: 'chain', pts: [{ x: Math.round(p.x), y: Math.round(p.y - 12) }, { x: Math.round(e.x), y: Math.round(e.y) }], pal: 'blood' }); } } }
   }
   p.buffs = p.buffs.filter((b) => b.t > 0);
   if (s.regen) { p.regenAcc += s.regen * dt; if (p.regenAcc >= 1) { healPlayer(G, p, Math.floor(p.regenAcc), true); p.regenAcc %= 1; } }
@@ -919,7 +938,8 @@ function updatePlayer(G, p, dt, inp) {
   const fighting = G.phase === 'fight' || G.phase === 'intro';
   // 移動
   let mx = inp.mx || 0, my = inp.my || 0; const ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; }
-  const spd = 108 * s.speed;
+  if (p.slowT > 0) p.slowT -= dt;
+  const spd = 108 * s.speed * (p.slowT > 0 ? 0.6 : 1);
   if (p.dashT > 0) { p.dashT -= dt; p.x += p.dashVx * dt; p.y += p.dashVy * dt; }
   else {
     p.vx += (mx * spd - p.vx) * Math.min(1, dt * 14); p.vy += (my * spd - p.vy) * Math.min(1, dt * 14);
@@ -956,7 +976,7 @@ function updatePlayer(G, p, dt, inp) {
       if (sp.kind === 'buff') want = (sp.heal && p.hp < p.maxHp * 0.65) || (sp.revive && G.players.some((q) => q.dead)) || (!sp.heal && live.length > 0) || (sp.regen && p.hp < p.maxHp * 0.8);
       else if (sp.kind === 'dash') want = live.some((e) => dist2(e, p) < 120 * 120) && Math.random() < 0.02;
       else want = live.some((e) => dist2(e, p) < (sp.kind === 'nova' ? (sp.rad + 20) ** 2 : 300 * 300));
-      if (sp.kind === 'ult') want = live.length >= 3 || live.some((e) => e.boss);
+      if (sp.kind === 'ult') want = sp.ult === 'omni' ? live.length >= 2 : (live.length >= 3 || live.some((e) => e.boss));
     }
     if (want) {
       if (castSpell(G, p, i, inp)) o.cd = sp.cd * cdMul * (sp.kind === 'ult' ? 1 - s.ultCdr : 1);
@@ -1001,6 +1021,13 @@ function updateShots(G, dt) {
       if (sh.boom) { explodeShot(G, sh); sh.life = 0; break; }
       hitEnemy(G, e, sh.dmg, sh.owner, { knock: sh.knock, ka: sh.a, lifesteal: sh.lifesteal }); applyStatus(e, sh.st, sh.owner);
       if (sh.hitFx) fx(G, sh.hitFx, sh.x, sh.y, { angle: sh.a, pal: sh.pal });
+      if (sh.split && !sh.child) {
+        for (let k = 0; k < sh.split; k++) { const a = sh.a + (k - (sh.split - 1) / 2) * 0.7 + Math.PI * 0.0; G.shots.push({ ...sh, id: G.nextId++, x: sh.x, y: sh.y, vx: Math.cos(a) * 300, vy: Math.sin(a) * 300, a, dmg: sh.dmg * 0.6, hit: new Set([e.id]), life: 0.6, t: 0, child: true, split: 0, pierce: 0 }); }
+      }
+      if (sh.bounce > 0) {
+        sh.bounce--; const nx = nearest(G.enemies.filter((o) => o.hp > 0 && !sh.hit.has(o.id)), sh.x, sh.y, 220);
+        if (nx) { const sp = Math.hypot(sh.vx, sh.vy), a = Math.atan2(nx.y - sh.y, nx.x - sh.x); sh.vx = Math.cos(a) * sp; sh.vy = Math.sin(a) * sp; sh.life = Math.max(sh.life, 0.6); break; }
+      }
       if (sh.pierce-- <= 0) { sh.life = 0; break; }
     }
   }
@@ -1043,14 +1070,18 @@ function updateZones(G, dt) {
     if (z.vx) { z.x = clamp(z.x + z.vx * dt, 10, G.w - 10); z.y = clamp(z.y + z.vy * dt, 16, G.h - 10); }
     if (z.enemy) {
       if (z.pull) for (const p of G.players) if (!p.dead && dist2(p, z) < z.r * z.r) { const a = angTo(p, z); p.x += Math.cos(a) * z.pull * dt; p.y += Math.sin(a) * z.pull * dt; }
-      if (z.tt <= 0) { z.tt = z.tick; for (const p of G.players) if (!p.dead && dist2(p, z) < (z.k === 'web' ? z.r : z.r * 0.4) ** 2) { if (z.dmg) hurtPlayer(G, p, z.dmg, null); } }
+      if (z.tt <= 0) { z.tt = z.tick; for (const p of G.players) if (!p.dead && dist2(p, z) < (z.k === 'web' || z.k === 'slime' ? z.r : z.r * 0.4) ** 2) { if (z.dmg) hurtPlayer(G, p, z.dmg, null); if (z.k === 'slime') p.slowT = 0.6; } }
       continue;
     }
     if (z.pull) for (const e of G.enemies) if (e.hp > 0 && !e.boss && dist2(e, z) < z.r * z.r) { const a = angTo(e, z), d = Math.sqrt(dist2(e, z)); if (d > 6) { e.x += Math.cos(a) * z.pull * dt; e.y += Math.sin(a) * z.pull * dt; } }
     if (z.tt <= 0) {
       z.tt = z.tick;
       if (z.cone) { coneHit(G, z); if (z.bullets) { for (let k = 0; k < 2; k++) { const a = z.a + rnd(-z.arc / 2, z.arc / 2); ev(G, { e: 'tracer', x: Math.round(z.x), y: Math.round(z.y - 8), a: +a.toFixed(2), l: Math.round(z.r) }); } } }
-      else for (const e of G.enemies) if (e.hp > 0 && dist2(e, z) < (z.r + e.r) ** 2) { hitEnemy(G, e, z.dmg, z.owner, { noProc: Math.random() < 0.7 }); applyStatus(e, z.st, z.owner); }
+      else if (z.dmg) for (const e of G.enemies) if (e.hp > 0 && dist2(e, z) < (z.r + e.r) ** 2) { hitEnemy(G, e, z.dmg, z.owner, { noProc: Math.random() < 0.7, lifesteal: z.lifesteal }); applyStatus(e, z.st, z.owner); }
+      if (z.healTick) for (const q of G.players) if (dist2(q, z) < z.r * z.r) {
+        if (q.dead && z.revive) { q.dead = false; q.hp = Math.round(q.maxHp * 0.3); fx(G, 'resurrection', q.x, q.y); toast(G, `${q.name}が起き上がった！`); }
+        healPlayer(G, q, z.healTick, true);
+      }
     }
     if (z.t >= z.dur && z.endBoom) { fx(G, 'implosion', z.x, z.y); boomAt(G, z.x, z.y, z.r * 0.7, z.endBoom, 'player', z.owner, { knock: 60 }); sfx(G, 'boom', z.x, z.y); }
   }
@@ -1061,7 +1092,7 @@ function updateStrikes(G, dt) {
   for (const s of G.strikes) {
     s.t -= dt;
     const lead = FX_LEAD[s.fx] || 0;
-    if (!s.fxDone && s.t <= lead) { s.fxDone = true; fx(G, s.fx, s.x, s.y, { scale: s.r / 40 }); }
+    if (!s.fxDone && s.t <= lead) { s.fxDone = true; fx(G, s.fx, s.x, s.y, { scale: s.r / 40, pal: s.pal }); }
     if (s.t <= 0) {
       boomAt(G, s.x, s.y, s.r, s.dmg, 'player', s.owner, { st: s.st, knock: s.knock });
       sfx(G, s.fx === 'lightningStrike' ? 'thunder' : s.fx === 'nuke' ? 'nuke' : 'boom', s.x, s.y);
@@ -1110,6 +1141,22 @@ function updateSummons(G, dt) {
         }
         sfx(G, 'laser', s.x, s.y);
       }
+    } else if (s.type === 'hound') {
+      const t = nearest(live, s.x, s.y, 400);
+      const tx = t ? t.x : (o ? o.x + Math.cos(s.off + G.t) * 30 : s.x), ty = t ? t.y : (o ? o.y + Math.sin(s.off + G.t) * 30 : s.y);
+      const a = Math.atan2(ty - s.y, tx - s.x), d = Math.hypot(tx - s.x, ty - s.y);
+      s.a = a; if (d > 10) { s.x += Math.cos(a) * 150 * dt; s.y += Math.sin(a) * 150 * dt; s.walk = (s.walk || 0) + dt * 10; }
+      collideWorld(G, s);
+      if (t && d < t.r + 12 && s.cd <= 0) { s.cd = s.rate; hitEnemy(G, t, s.dmg, s.owner, { knock: 40, ka: a }); if (s.stun) applyStatus(t, { k: 'stun', dur: 0.5, chance: 0.4 }); fx(G, 'hitSpark', t.x, t.y); }
+    } else if (s.type === 'turret') {
+      const t = nearest(live, s.x, s.y, s.range);
+      if (t) s.a = angTo(s, t);
+      if (s.cd <= 0 && t) {
+        s.cd = s.rate;
+        G.shots.push({ id: G.nextId++, owner: s.owner, k: 'bullet', x: s.x, y: s.y, vx: Math.cos(s.a) * 520, vy: Math.sin(s.a) * 520, a: s.a, r: 5, dmg: s.dmg, pierce: 0, hit: new Set(), life: 0.8, t: 0, hitFx: 'bulletHit' });
+        if (s.missile && Math.random() < 0.2) G.shots.push({ id: G.nextId++, owner: s.owner, k: 'rocket', x: s.x, y: s.y, vx: Math.cos(s.a) * 200, vy: Math.sin(s.a) * 200, a: s.a, r: 6, dmg: s.dmg * 2.5, pierce: 0, hit: new Set(), life: 2, t: 0, boom: 40, boomFx: 'smallBoom', home: 4 });
+        sfx(G, 'gun', s.x, s.y);
+      }
     } else if (s.type === 'tesla') {
       if (s.cd <= 0) { s.cd = s.rate; const t = nearest(live, s.x, s.y, s.range); if (t) { chainFrom(G, s, s.dmg, 2, 120, s.owner, { k: 'stun', dur: 0.3, chance: 0.5 }, false, 'volt'); if (Math.random() < 0.3) { fx(G, 'lightningStrike', t.x, t.y); } } }
     } else if (s.type === 'decoy') {
@@ -1126,7 +1173,7 @@ function updateMines(G, dt) {
     m.arm -= dt;
     if (m.arm > 0) continue;
     if (G.enemies.some((e) => e.hp > 0 && dist2(e, m) < (m.r * 0.6 + e.r) ** 2)) {
-      m.gone = true; fx(G, 'smallBoom', m.x, m.y, { size: m.r / 50 }); boomAt(G, m.x, m.y, m.r, m.dmg, 'player', m.owner, { knock: 100 }); sfx(G, 'boom', m.x, m.y);
+      m.gone = true; fx(G, m.boomFx || 'smallBoom', m.x, m.y, { size: m.r / 50 }); boomAt(G, m.x, m.y, m.r, m.dmg, 'player', m.owner, { knock: m.st ? 0 : 100, st: m.st }); sfx(G, 'boom', m.x, m.y);
     }
   }
   G.mines = G.mines.filter((m) => !m.gone);
@@ -1184,14 +1231,15 @@ export function makeView(G) {
       name: e.boss ? e.D.name : undefined, p2: e.phase2 ? 1 : 0 })),
     shots: G.shots.map((s) => ({ id: s.id, k: s.k, x: r(s.x), y: r(s.y), a: +s.a.toFixed(2), pal: s.pal, vx: r(s.vx || 0), vy: r(s.vy || 0) })),
     bullets: G.bullets.map((b) => [r(b.x), r(b.y), r(b.vx), r(b.vy), b.r, b.col, b.ref ? 1 : 0]),
-    zones: G.zones.map((z) => ({ id: z.id, k: z.k, x: r(z.x), y: r(z.y), r: r(z.r), a: z.a != null ? +z.a.toFixed(2) : 0, e: z.enemy ? 1 : 0, f: z.follow ?? null })),
+    zones: G.zones.map((z) => ({ id: z.id, k: z.k, x: r(z.x), y: r(z.y), r: r(z.r), a: z.a != null ? +z.a.toFixed(2) : 0, e: z.enemy ? 1 : 0, f: z.follow ?? null, pal: z.pal })),
     teles: G.teles.map((t) => ({ k: t.kind, x: r(t.x), y: r(t.y), r: t.r, ang: t.ang != null ? +t.ang.toFixed(2) : 0, len: t.len, w: t.w, p: +(1 - t.t / t.max).toFixed(2), d: t.dmg ? 1 : 0 })),
     strikes: G.strikes.filter((s) => s.mark).map((s) => ({ x: r(s.x), y: r(s.y), r: r(s.r), t: +s.t.toFixed(2) })),
-    summons: G.summons.map((s) => ({ id: s.id, type: s.type, x: r(s.x), y: r(s.y), a: +(s.a || 0).toFixed(2), slot: (G.players.find((q) => q.id === s.owner) || {}).slot || 0, life: +s.life.toFixed(1) })),
+    summons: G.summons.map((s) => ({ id: s.id, type: s.type, x: r(s.x), y: r(s.y), a: +(s.a || 0).toFixed(2), slot: (G.players.find((q) => q.id === s.owner) || {}).slot || 0, life: +s.life.toFixed(1), doll: s.doll ? 1 : 0, w: +(s.walk || 0).toFixed(1) })),
     mines: G.mines.map((m) => [r(m.x), r(m.y), m.arm > 0 ? 0 : 1]),
     pickups: G.pickups.map((k) => ({ id: k.id, k: k.k, x: r(k.x), y: r(k.y), o: k.owner ?? null, u: k.used ? 1 : 0 })),
     exits: G.exits.map((e) => ({ x: e.x, y: e.y, type: e.type, reward: e.reward, hold: +e.hold.toFixed(2) })),
     props: G.props.map((p) => ({ m: p.model, x: r(p.x), y: r(p.y), a: p.a, g: p.grow ?? 1 })),
+    stealth: G.players.filter((p) => p.buffs.some((b) => b.stealth)).map((p) => p.id),
     shop: G.shop ? G.shop.map((it) => ({ i: it.i, t: it.t, id: it.id, name: it.name, desc: it.desc, price: it.price, sold: it.sold })) : null,
     boss: G.enemies.find((e) => e.boss) ? (() => { const e = G.enemies.find((o) => o.boss); return { name: e.D.name, hp: Math.max(0, r(e.hp)), mhp: e.maxHp, p2: e.phase2 ? 1 : 0 }; })() : null,
     obstacles: null,

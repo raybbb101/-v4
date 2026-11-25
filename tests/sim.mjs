@@ -41,10 +41,10 @@ for (const lv of [1, 3, 6, 10]) {
   }
 }
 // 2) 長い通しプレイ（無敵、全部の世界とボス）
-const r = run(['fire', 'thunder', 'laser', 'gun', 'drone', 'heal'], 10, true, 900, 1, 2);
+const r = run(['ember', 'shiden', 'laser', 'revolver', 'k9', 'mend'], 10, true, 900, 1, 2);
 console.log(`long run: rooms=${r.rooms} floor=${r.G.floor} depth=${r.G.depth} kills=${r.G.kills} t=${Math.round(r.t)} won=${r.G.won}`);
 // 3) ふつうのボット（死ぬまで）
-const r2 = run(['fire'], 1, false, 900, 1, 1);
+const r2 = run(['ember'], 1, false, 900, 1, 1);
 console.log(`mortal run: rooms=${r2.rooms} floor=${r2.G.floor} room=${r2.G.room} kills=${r2.G.kills} lv=${r2.G.players[0].lv} over=${r2.G.over} t=${Math.round(r2.t)}`);
 console.log({ errors, maxEnemies, maxShots, maxBullets, ms: Date.now() - T0 });
 const missing = Object.keys(evCount).filter((k) => k.startsWith('fx:')).map((k) => k.slice(3));

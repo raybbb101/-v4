@@ -7,8 +7,6 @@ export const PALS = {
   ...PAL,
   laserRed: ['#2a0610', '#5c0d1c', '#9a1428', '#d8243a', '#ff4d5e', '#ff8a94', '#ffd0d4', '#ffffff'],
   laserCyan: ['#04141e', '#08304a', '#0c5a80', '#1890c0', '#40c8f0', '#90ecff', '#d8fbff', '#ffffff'],
-  crimson: ['#1a0206', '#4a0610', '#8a0c1c', '#d01830', '#ff3a50', '#ff7a80', '#ffc8c8', '#ffffff'],
-  fairy: ['#140a26', '#2a1450', '#3a3a9a', '#3a8ad8', '#5ae0e0', '#a8fff0', '#ffd8f8', '#ffffff'],
   sun: ['#3a0a04', '#7a1a06', '#c0400a', '#f07a14', '#ffb030', '#ffe070', '#fff8c0', '#ffffff'],
   violet: ['#0c0418', '#1e0a3a', '#3a1470', '#5a28b0', '#8a50f0', '#b890ff', '#e8d8ff', '#ffffff'],
 };
@@ -72,9 +70,6 @@ export const FXDEF = {
   orbitalE: { m: F.orbitalStrike, o: { palette: P('laserRed') } },
   starCollapse: { m: F.implosion, o: { palette: P('sun') }, then: { k: 'novaBlast', at: 1.1 } },
   meteorFire: { m: F.meteor, o: {} },
-  tide: { m: F.tideWave, o: {} },
-  sunOrb: { m: F.sunOrb, o: {}, life: 2 },
-  sunShatter: { m: F.plasmaExplosion, o: { palette: P('sun') } },
 
   // ---------- 自分のまわり ----------
   fireRing: { m: F.fireRing, o: {}, sz: (o) => ({ reach: Math.round(70 * (o.scale || 1)) }) },
@@ -91,7 +86,6 @@ export const FXDEF = {
   disintegrate: { m: F.empBlast, o: { palette: P('poison'), fringe: '#d8ff5a' } },
   waveCrash: { m: F.waveCrash, o: {} },
   frostNovaBig: { m: F.frostNova, o: { reach: 140 } },
-  healingBloomBig: { m: F.healAoe, o: { reach: 140 } },
   novaBlast: { m: F.plasmaExplosion, o: { palette: P('violet') }, extra: ['sunburstLoop'] },
 
   // ---------- 強化・体 ----------
@@ -105,11 +99,9 @@ export const FXDEF = {
   divineShield: { m: F.divineShield, o: { radius: 22 }, life: 3 },
   scanner: { m: F.scanner, o: {}, life: 3 },
   chargeUp: { m: F.chargeUp, o: {} },
-  overdriveAura: { m: F.electrified, o: {}, life: 8 },
   levelUpFx: { m: F.levelUp, o: {} },
   rage: { m: F.rage, o: {}, life: 2 },
   freezeOn: { m: F.iceShatter, o: {} },
-  crimsonWrap: { m: F.crimsonWrap, o: {} },
   iceSpikesAt: { m: F.iceSpikes, o: { reach: 40, height: 40 } },
   iceShatter: { m: F.iceShatter, o: {} },
   flamePillar: { m: F.flamePillar, o: { height: 90 } },
@@ -138,7 +130,6 @@ export const FXDEF = {
   shadowTendrils: { m: F.shadowTendrils, o: {}, layer: 'ground' },
   hexSigil: { m: F.hexSigil, o: {}, layer: 'ground' },
   blackHole: { m: F.blackHole, o: {} },
-  singularity: { m: F.blackHole, o: { palette: P('violet') }, extra2: 'implode' },
   leafStorm: { m: F.leafStorm, o: {} },
   whirlpool: { m: F.whirlpool, o: {}, layer: 'ground' },
   fireField: { m: F.fireField, o: { radius: 34 } },
@@ -155,5 +146,29 @@ export const FXDEF = {
   flamethrower: { m: F.flamethrower, o: { reach: 90 } },
   waterJet: { m: F.waterJet, o: { length: 120 } },
   gatling: { m: F.muzzleSmg, o: {} },
+
+  // ---------- 50 の魔法のための追加 ----------
+  shard: { custom: 'crescent', col: ['#4a5476', '#b8c8e8', '#f0f8ff', '#ffffff'] },
+  nail: { custom: 'tracer', col: ['#2a1040', '#a868f0', '#e0c8ff', '#ffffff'] },
+  bloodBolt: { custom: 'bolt', col: ['#4a0610', '#d01830', '#ff7a80', '#ffffff'], trail: 8 },
+  noteRing: { m: F.noteRing, o: {}, sz: (o) => ({ reach: Math.round(80 * Math.min(2.6, o.scale || 1)) }) },
+  vineWhip: { m: F.vineWhip, o: {} },
+  bubbleField: { m: F.bubbles, o: {} },
+  snowBurst: { m: F.snowflakeBurst, o: {} },
+  frostBreath: { m: F.frostBreath, o: {} },
+  blizzardZone: { m: F.blizzardVortex, o: {} },
+  laserGrid: { m: F.laserGrid, o: {} },
+  sandStorm: { m: F.poisonCloud, o: { palette: P('dust') }, layer: 'ground' },
+  sandBoom: { m: F.dirtExplosion, o: { fire: P('dust') } },
+  bloodWell: { m: F.whirlpool, o: { palette: P('blood') }, layer: 'ground' },
+  holyBladeSmall: { m: F.holyBlade, o: { palette: P('metal') } },
+  flamePillarSmall: { m: F.flamePillar, o: { height: 60 } },
+  eclipseFx: { m: F.eclipse, o: {}, life: 2.4 },
+  darkPop: { m: F.implosion, o: { palette: P('shadow') } },
+  curseFx: { m: F.curse, o: {} },
+  railBeam: { custom: 'beam', col: ['#4a0a18', '#ff5a3a', '#ffd0a0', '#ffffff'], w: 3, life: 0.3 },
+  quantumPop: { m: F.zapHit, o: { palette: P('cyber') } },
+  cartoonPow: { m: F.cartoonPow, o: { text: 'BAM!' } },
+  slime: { m: F.toxicPuddle, o: { width: 20, palette: P('cyber') }, layer: 'ground' },
 };
 export { hex };

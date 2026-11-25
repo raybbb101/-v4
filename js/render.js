@@ -133,6 +133,25 @@ function chainFx(pts, pal) {
   };
 }
 
+// 龍王：火の鱗の長い体が、うねりながら画面を駆け抜ける
+function dragonFx(x0, y0, a, len) {
+  let t = 0; const C = PALS.fire.map(hex), ca = Math.cos(a), sa = Math.sin(a), T = 1.3, N = 26;
+  return {
+    layer: 'front', update(dt) { t += dt; }, done: () => t > T,
+    draw(p) {
+      const head = t / T * (len + 300) - 60;
+      for (let i = N - 1; i >= 0; i--) {
+        const d = head - i * 9; if (d < -20) continue;
+        const w = Math.sin(d * 0.03 + t * 8) * 14, x = x0 + ca * d - sa * w, y = y0 - 40 + sa * d + ca * w;
+        const r = i === 0 ? 7 : Math.max(2, 6 - i * 0.18);
+        p.circle(x, y, r, C[3]); p.circle(x - 1, y - 1, r - 1.5, C[5]); p.px(x - 2, y - 2, C[7]);
+        if (i % 3 === 0) p.glow(x, y, 14, C[4], 0.25);
+        if (i === 0) { p.px(x + ca * 4 - sa * 2, y + sa * 4 + ca * 2 - 2, hex('#ffffff')); for (const s of [-1, 1]) p.line(x - ca * 3, y - 5, x - ca * 10 + s * 4, y - 14, C[6]); }
+      }
+    },
+  };
+}
+
 function tracerFx(x, y, a, l) {
   let t = 0; const ca = Math.cos(a), sa = Math.sin(a) * SQ, Y = hex('#ffe066'), W = hex('#ffffff'), d0 = rand(10, 30);
   return { layer: 'front', update(dt) { t += dt; }, done: () => t > 0.09, draw(p) { const u = t / 0.09, d = d0 + u * l; p.line(x + ca * d, y + sa * d, x + ca * (d + 14), y + sa * (d + 14), (v) => (v > 0.6 ? W : Y)); p.glow(x + ca * (d + 14), y + sa * (d + 14), 4, Y, 0.3); } };
@@ -268,11 +287,13 @@ export class Renderer {
       case 'chain': this.fxFront.custom(chainFx(e.pts, e.pal)); break;
       case 'tracer': this.fxFront.custom(tracerFx(e.x, e.y * SQ, e.a, e.l)); break;
       case 'arrowFly': this.fxFront.custom(arrowFlyFx(e.x0, e.y0 * SQ, e.x1, e.y1 * SQ)); break;
+      case 'dragonFly': this.fxFront.custom(dragonFx(e.x0, e.y0 * SQ, Math.atan2(Math.sin(e.ang) * SQ, Math.cos(e.ang)), e.len)); break;
       case 'screen':
         if (e.k === 'flash') this.flash = { col: e.col, t: e.dur, max: e.dur };
         else if (e.k === 'blizzard') this.overlay = { kind: 'snow', t: e.dur };
         else if (e.k === 'fairies') this.overlay = { kind: 'fairy', t: e.dur };
         else if (e.k === 'timestop') this.grayT = e.dur;
+        else if (e.k === 'dark') this.darkT = e.dur;
         break;
     }
   }
@@ -314,7 +335,7 @@ export class Renderer {
     const L = [];
     for (const w of this.walls) L.push({ y: w.y, d: () => drawModel(g, this.wallModel, X(w.x), Y(w.y), 0) });
     for (const o of this.room.obstacles) L.push({ y: o.y, d: () => { shadow(g, X(o.x), Y(o.y), o.r + 2); drawModel(g, o.model, X(o.x), Y(o.y), o.a); } });
-    for (const pr of view.props) L.push({ y: pr.y, d: () => { shadow(g, X(pr.x), Y(pr.y), 14 * pr.g); drawModel(g, pr.m, X(pr.x), Y(pr.y), pr.a, { sx: Math.max(0.05, pr.g), sy: Math.max(0.05, pr.g), frame: Math.floor(this.t * 2) % 2 }); } });
+    for (const pr of view.props) L.push({ y: pr.y, d: () => { shadow(g, X(pr.x), Y(pr.y), 14 * pr.g); drawModel(g, pr.m, X(pr.x), Y(pr.y), pr.a, { sx: Math.max(0.05, pr.g), sy: Math.max(0.05, pr.g), frame: Math.floor(this.t * (pr.m === 'bigtruck' ? 12 : 2)) % 2 }); } });
     for (const k of view.pickups) { const d = this.pickupDraw(g, k, X, Y); if (d) L.push({ y: k.y, d }); }
     for (const e of view.enemies) L.push({ y: e.y, d: () => this.drawEnemy(g, e, X, Y) });
     for (const s of view.summons) L.push({ y: s.y, d: () => this.drawSummon(g, s, X, Y) });
@@ -330,6 +351,7 @@ export class Renderer {
     this.drawAmbient(g, dt, W, H);
     g.drawImage(this.vign, 0, 0);
     if (this.grayT > 0) { this.grayT -= dt; g.save(); g.globalCompositeOperation = 'saturation'; g.fillStyle = 'rgba(128,128,128,0.85)'; g.fillRect(0, 0, W, H); g.restore(); g.fillStyle = 'rgba(240,210,122,0.06)'; g.fillRect(0, 0, W, H); }
+    if (this.darkT > 0) { this.darkT -= dt; const k = Math.min(1, this.darkT * 2, 2.6 - this.darkT); g.save(); g.globalAlpha = 0.55 * Math.max(0, k); g.fillStyle = '#0a0418'; g.fillRect(0, 0, W, H); g.restore(); }
     if (this.flash) { this.flash.t -= dt; const k = Math.max(0, this.flash.t / this.flash.max); g.save(); g.globalAlpha = k * 0.7; g.fillStyle = this.flash.col; g.fillRect(0, 0, W, H); g.restore(); if (this.flash.t <= 0) this.flash = null; }
     if (p && p.hurt) { g.save(); g.globalAlpha = 0.08; g.fillStyle = '#ff2040'; g.fillRect(0, 0, W, H); g.restore(); }
     if (p && p.hp < p.mhp * 0.3 && !p.dead) { const k = 0.12 + 0.08 * Math.sin(this.t * 6); g.save(); g.globalAlpha = k; g.drawImage(this.vign, 0, 0); g.fillStyle = 'rgba(160,0,30,0.25)'; g.globalCompositeOperation = 'source-atop'; g.restore(); }
@@ -393,6 +415,7 @@ export class Renderer {
         if (def.custom) { f = customFx(def.custom, def, { x: zx, y: zy }); (def.layer === 'ground' ? this.fxBack : this.fxFront).custom(f); f.isCustom = true; }
         else {
           const o = { ...def.o, x: zx, y: zy };
+          if (z.pal && PALS[z.pal]) o.palette = PALS[z.pal];
           if (z.k === 'fireField' || z.k === 'napalm') o.radius = z.r;
           if (z.k === 'flamethrower') o.reach = Math.round(z.r * 0.9);
           if (z.k === 'waterJet') o.length = Math.round(z.r);
@@ -518,7 +541,10 @@ export class Renderer {
     const x = X(s.x), y = Y(s.y);
     if (s.type === 'drone') { shadow(g, x, y + 10, 4); drawModel(g, 'allydrone', x, y, s.a, { frame: Math.floor(this.t * 20) % 2, lift: 14 + Math.sin(this.t * 4 + s.id) * 2 }); }
     else if (s.type === 'fortress') { shadow(g, x, y + 30, 10); drawModel(g, 'fortress', x, y, s.a, { frame: Math.floor(this.t * 20) % 2, lift: 30 }); }
+    else if (s.type === 'decoy' && s.doll) { shadow(g, x, y, 5); drawModel(g, 'doll', x, y, s.a); }
     else if (s.type === 'decoy') { shadow(g, x, y, 6); drawModel(g, 'holo', x, y, s.a, { frame: Math.floor(this.t * 3) % 2, alpha: 0.55 + 0.2 * Math.sin(this.t * 15), tint: ['#7ff6ff', 0.4] }); }
+    else if (s.type === 'hound') { shadow(g, x, y, 6); drawModel(g, 'k9', x, y, s.a, { frame: Math.floor((s.w || 0) / 2) % 2 }); }
+    else if (s.type === 'turret') { shadow(g, x, y, 6); drawModel(g, 'allyturret', x, y, s.a); }
     else if (s.type === 'tesla') { shadow(g, x, y, 6); drawModel(g, 'pylon', x, y, 0); }
   }
 
@@ -536,9 +562,10 @@ export class Renderer {
       if (q.rev > 0) { g.strokeStyle = '#7ee88a'; g.lineWidth = 2; g.beginPath(); g.arc(x, y - 36, 5, -Math.PI / 2, -Math.PI / 2 + q.rev * TAU); g.stroke(); g.lineWidth = 1; }
       return;
     }
-    const blink = q.ifr && !q.dash && Math.floor(this.t * 20) % 2;
+    const stealth = (this.view.stealth || []).includes(q.id);
+    const blink = stealth || (q.ifr && !q.dash && Math.floor(this.t * 20) % 2);
     const frame = Math.floor(q.walk / 3) % 2;
-    drawModel(g, 'mage' + (q.slot % 4), x, y, q.a, { frame, tint: q.hurt ? ['#ff3050', 0.55] : null, alpha: blink ? 0.6 : 1, lift: q.cast ? 1 : 0 });
+    drawModel(g, 'mage' + (q.slot % 4), x, y, q.a, { frame, tint: q.hurt ? ['#ff3050', 0.55] : stealth ? ['#7ff6ff', 0.5] : null, alpha: stealth ? 0.3 : blink ? 0.6 : 1, lift: q.cast ? 1 : 0 });
     if (q.sh > 0) { g.save(); g.globalCompositeOperation = 'lighter'; g.strokeStyle = `rgba(120,220,255,${0.4 + 0.2 * Math.sin(this.t * 8)})`; g.beginPath(); g.ellipse(x, y - 14, 13, 18, 0, 0, TAU); g.stroke(); g.restore(); }
     if (q.inv) { g.save(); g.globalCompositeOperation = 'lighter'; g.strokeStyle = 'rgba(255,240,160,0.7)'; g.beginPath(); g.ellipse(x, y - 14, 15, 20, 0, 0, TAU); g.stroke(); g.restore(); }
     if (multi) {
