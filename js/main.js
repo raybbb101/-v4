@@ -129,7 +129,8 @@ function readInput() {
   const inp = { mx, my, ax: Math.round(w.x), ay: Math.round(w.y + 12 / SQ), fire: mouse.down && !S.auto, dash: latch.dash, cast: latch.cast.slice(), auto: S.auto };
   return inp;
 }
-function clearLatch() { latch.dash = false; latch.cast.fill(false); latch.use = false; }
+// use（調べる）は商人のところで使うので、ここでは消さない
+function clearLatch() { latch.dash = false; latch.cast.fill(false); }
 
 // ---------- 画面の切り替え ----------
 function toTitle() {
@@ -382,6 +383,7 @@ function openShop(v) {
 }
 function closeShop() { S.shopOpen = false; UI.show('shop', false); }
 $('btnShopClose').onclick = closeShop;
+$('hint').addEventListener('pointerdown', (e) => { e.preventDefault(); latch.use = true; });
 
 // ---------- 一時停止 ----------
 function togglePause() {
@@ -516,10 +518,11 @@ function frame(now) {
   const p = view.players.find((q) => q.id === S.me);
   syncChoice(p);
   // 商人
-  const nearShop = view.shop && view.players.some((q) => (S.local || q.id === S.me) && view.props.some((pr) => pr.m === 'merchant' && Math.hypot(pr.x - q.x, pr.y - q.y) < 50));
+  const nearShop = view.shop && view.players.some((q) => (S.local || q.id === S.me) && view.props.some((pr) => pr.m === 'merchant' && Math.hypot(pr.x - q.x, pr.y - q.y) < 64));
   $('hint').classList.toggle('hidden', !nearShop || S.shopOpen);
-  if (nearShop) $('hint').textContent = isTouch ? '「調べる」で商人と話す' : 'E で商人と話す';
-  if (nearShop && latch.use) { if (!S.local) S.shopFor = S.me; openShop(view); latch.use = false; }
+  if (nearShop) $('hint').textContent = isTouch ? '🛒 タップで商人と話す' : '🛒 E キー（またはここをクリック）で商人と話す';
+  if (nearShop && latch.use && !S.shopOpen) { if (!S.local) S.shopFor = S.me; openShop(view); }
+  latch.use = false;
   if (!nearShop && S.shopOpen) closeShop();
   if (S.shopOpen) $('shopGold').textContent = '🪙 ' + (p ? p.gold : 0);
   // 見つけた魔法を魔導書に書く

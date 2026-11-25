@@ -74,6 +74,7 @@ function enterRoom(G, type, reward) {
     const x = rnd(40, G.w - 40), y = rnd(50, G.h - 40);
     if (Math.hypot(x - G.w / 2, y - G.h / 2) < 90) continue;
     if (y > G.h - 90 && Math.abs(x - G.w / 2) < 80) continue;
+    if ((type === 'shop' || type === 'rest') && Math.abs(x - G.w / 2) < 80) continue;   // 商人・泉への道はあけておく
     if (G.obstacles.some((o) => Math.hypot(o.x - x, o.y - y) < o.r + r + 26)) continue;
     G.obstacles.push({ x, y, r, model, a: rnd(TAU) });
   }
