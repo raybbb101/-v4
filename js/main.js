@@ -3,7 +3,7 @@ import './models.js';
 import { warm, drawModel, SQ } from './stack.js';
 import { createGame, step, makeView, choose, buy, roomInfo, setPaused, PCOLORS, devJump } from './sim.js';
 import { Renderer } from './render.js';
-import { makeHost, makeGuest, lanInfo } from './net.js';
+import { Host, Guest } from './net.js';
 import { initAudio, sfx, playSong, setMuted, isMuted } from './audio.js';
 import { SPELL, META, MAX_LV } from './spells.js';
 import { DIFFS, BIOMES } from './enemies.js';
@@ -134,9 +134,9 @@ function clearLatch() { latch.dash = false; latch.cast.fill(false); }
 
 // ---------- 画面の切り替え ----------
 function toTitle() {
-  S.mode = 'title'; S.G = null; S.ended = false; S.local = 0; R.followIds = null; S.direct = null;
+  S.mode = 'title'; S.G = null; S.ended = false; S.local = 0; R.followIds = null;
   if (S.host) { S.host.close(); S.host = null; } if (S.guest) { S.guest.close(); S.guest = null; }
-  for (const id of ['hud', 'choice', 'shop', 'pause', 'result', 'lobby', 'book', 'altar', 'wifi', 'local']) UI.show(id, false);
+  for (const id of ['hud', 'choice', 'shop', 'pause', 'result', 'lobby', 'book', 'altar']) UI.show(id, false);
   UI.show('title'); $('crystalCount').textContent = save.crystals; $('titleStatus').textContent = '';
   R.room = null; playSong(5);
 }
@@ -162,14 +162,13 @@ function startHost(kind, statusId) {
   initAudio(); sfx('ui');
   $(statusId).textContent = kind === 'direct' ? '' : 'ルームを作っています…';
   S.me = 'p0'; S.lobby = [{ id: 'p0', name: myName(), conn: null }]; S.net = kind; S.code = '';
-  S.host = makeHost(kind, {
-    ready: (code) => { S.code = code; UI.show('wifi', false); openLobby(true); },
+  S.host = new Host({
+    ready: (code) => { S.code = code; $(statusId).textContent = ''; openLobby(true); },
     join: (conn) => {
       const id = 'p' + (Date.now() % 100000) + Math.floor(Math.random() * 99);
       conn._pid = id; S.lobby.push({ id, name: '…', conn });
       S.host.send(conn, { t: 'hello', id, diff: save.diff, code: S.code });
       lobbyUpdate();
-      if (S.mode === 'play') { S.host.send(conn, { t: 'reject', text: 'もう冒険が始まっています。次のルームで一緒に遊ぼう。' }); }
     },
     message: (conn, m) => hostMsg(conn, m),
     leave: (conn) => {
@@ -191,6 +190,7 @@ function hostMsg(conn, m) {
       hostInputs[pid] = { ...m, cast, dash: m.dash || prev.dash };
       break;
     }
+    case 'ping': break;
     case 'pick': if (S.G) choose(S.G, pid, m.idx); break;
     case 'buy': if (S.G) buy(S.G, pid, m.i); break;
     case 'chat': { const pl = S.lobby.find((q) => q.conn === conn); const text = String(m.text || '').slice(0, 80); if (pl && text) { S.host.broadcast({ t: 'chat', name: pl.name, text }); showChat(pl.name, text); } break; }
@@ -206,11 +206,9 @@ function openLobby(isHost) {
   $('lobbyTitle').textContent = isHost ? 'ルームを作りました' : 'ルームに入りました';
   $('lobbyCode').textContent = S.code;
   $('codeBox').classList.toggle('hidden', !S.code);
-  $('directBox').classList.toggle('hidden', !(isHost && S.net === 'direct'));
-  $('copyLink').classList.toggle('hidden', S.net !== 'peer');
-  $('inviteOut').value = ''; $('answerIn').value = '';
+
   $('btnStart').classList.toggle('hidden', !isHost);
-  $('lobbyHint').textContent = !isHost ? 'ホストが冒険を始めるのを待っています…' : S.net === 'direct' ? '仲間ひとりずつ、招待コードを送って返事コードをもらいます（最大 4 人）。そろったら「冒険を始める」。' : S.net === 'lan' ? '仲間は同じアドレスを開いて、この部屋番号を入れます（最大 4 人）。' : '仲間にこのコードを伝えてください（最大 4 人）。そろったら「冒険を始める」。';
+  $('lobbyHint').textContent = isHost ? '仲間にこの 5 文字のコードを伝えてください（最大 4 人）。仲間は同じページを開いて「参加する」にコードを入れます。そろったら「冒険を始める」。' : 'つながりました！ホストが冒険を始めるのを待っています…';
   $('lobbyChat').innerHTML = '';
   lobbyUpdate();
 }
@@ -235,19 +233,20 @@ function startGuest(kind, code, statusId) {
   initAudio(); sfx('ui');
   $(statusId).textContent = '接続しています…';
   S.code = kind === 'direct' ? '' : code; S.net = kind;
-  S.guest = makeGuest(kind, code, {
+  S.guest = new Guest(code, {
     open: () => { S.guest.send({ t: 'name', name: myName() }); },
     message: (m) => guestMsg(m),
     close: () => { if (S.mode !== 'title') { UI.toast('ホストとの接続が切れました'); setTimeout(toTitle, 1500); } },
-    error: (t) => { $(statusId).textContent = t; S.guest = null; },
+    error: (t) => { $(statusId).textContent = t; S.guest = null; if (S.mode === 'lobby') { toTitle(); $(statusId).textContent = t; } },
   });
   return S.guest;
 }
 function guestMsg(m) {
   switch (m.t) {
-    case 'hello': S.me = m.id; UI.show('wifi', false); openLobby(false); break;
-    case 'full': $('titleStatus').textContent = 'このルームは満員です'; break;
-    case 'reject': $('titleStatus').textContent = m.text; break;
+    case 'hello': S.me = m.id; $('titleStatus').textContent = ''; openLobby(false); break;
+    case 'ping': break;
+    case 'full': S.guest.close(); S.guest = null; toTitle(); $('titleStatus').textContent = 'このルームは満員です（4 人まで）'; break;
+    case 'reject': S.guest.close(); S.guest = null; toTitle(); $('titleStatus').textContent = 'そのルームはもう冒険を始めています。'; break;
     case 'lobby': S.lobby = m.list; $('lobbyPlayers').innerHTML = m.list.map((q, i) => `<li style="--c:${PCOLORS[i % 4]}">${i === 0 ? '👑 ' : ''}${escapeHtml(q.name)}${q.id === S.me ? '（あなた）' : ''}</li>`).join(''); break;
     case 'start': S.mode = 'play'; S.snaps = []; for (const id of ['title', 'lobby']) UI.show(id, false); UI.show('hud'); UI.show('touch', isTouch); $('roomBox').classList.remove('hidden'); $('hudCode').textContent = S.code; break;
     case 'snap': {
@@ -258,69 +257,6 @@ function guestMsg(m) {
     case 'chat': showChat(m.name, m.text); break;
   }
 }
-
-// ---------- 同じ Wi-Fi ----------
-async function copyText(t) { try { await navigator.clipboard.writeText(t); UI.toast('コピーしました'); } catch { UI.toast('長押しでコピーしてください'); } }
-async function shareText(t, title) { if (navigator.share) { try { await navigator.share({ title, text: t }); return; } catch { /* 取り消し */ } } copyText(t); }
-$('btnWifi').onclick = async () => {
-  initAudio(); sfx('ui'); UI.show('wifi'); $('wifiStatus').textContent = ''; $('directStatus').textContent = '';
-  $('answerOut').classList.add('hidden'); $('answerBtns').classList.add('hidden'); $('inviteIn').value = '';
-  const info = await lanInfo();
-  UI.show('lanOn', !!info); UI.show('lanOff', !info);
-  if (info) $('lanUrls').innerHTML = info.urls.map((u) => `<span>${escapeHtml(u)}</span>`).join('') || `<span>${escapeHtml(location.origin)}</span>`;
-};
-$('btnWifiClose').onclick = () => { UI.show('wifi', false); if (S.guest && S.mode === 'title') { S.guest.close(); S.guest = null; } };
-$('btnDirectHost').onclick = () => startHost('direct', 'wifiStatus');
-$('btnLanHost').onclick = () => startHost('lan', 'wifiStatus');
-$('btnLanJoin').onclick = () => { const c = $('lanCode').value.trim(); if (!/^\d{4}$/.test(c)) { $('wifiStatus').textContent = '部屋番号は 4 けたの数字です'; return; } startGuest('lan', c, 'wifiStatus'); };
-$('btnDirectJoin').onclick = async () => {
-  const code = $('inviteIn').value.trim(); if (!code) { $('directStatus').textContent = '招待コードを貼りつけてください'; return; }
-  if (S.guest) { S.guest.close(); S.guest = null; }
-  const g = startGuest('direct', '', 'directStatus');
-  $('directStatus').textContent = '返事コードを作っています…';
-  try {
-    const ans = await g.answer(code);
-    $('answerOut').value = ans; $('answerOut').classList.remove('hidden'); $('answerBtns').classList.remove('hidden');
-    $('directStatus').textContent = 'この返事コードをホストに送ってください。ホストが貼りつけるとつながります。';
-  } catch (e) { $('directStatus').textContent = '招待コードが読めません（' + (e.message || e) + '）。全部コピーできているか確認してください。'; }
-};
-$('copyAnswer').onclick = () => copyText($('answerOut').value);
-$('shareAnswer').onclick = () => shareText($('answerOut').value, '魔法戦争 v4 の返事コード');
-$('btnInvite').onclick = async () => {
-  if (!S.host || !S.host.invite) return;
-  $('btnInvite').disabled = true; $('inviteOut').value = '作っています…';
-  try { $('inviteOut').value = await S.host.invite(); } catch (e) { $('inviteOut').value = ''; UI.toast('招待コードを作れませんでした: ' + (e.message || e)); }
-  $('btnInvite').disabled = false;
-};
-$('copyInvite').onclick = () => copyText($('inviteOut').value);
-$('shareInvite').onclick = () => shareText($('inviteOut').value, '魔法戦争 v4 の招待コード');
-$('btnAccept').onclick = async () => {
-  try { await S.host.accept($('answerIn').value); $('answerIn').value = ''; UI.toast('つないでいます…'); }
-  catch (e) { UI.toast('返事コードが読めません: ' + (e.message || e)); }
-};
-
-// ---------- 同じ画面で協力 ----------
-let localN = 2;
-function drawLocal() {
-  $('localN').innerHTML = [2, 3, 4].map((n) => `<button data-n="${n}" aria-pressed="${n === localN}">${n} 人</button>`).join('');
-  $('localN').querySelectorAll('button').forEach((b) => (b.onclick = () => { localN = +b.dataset.n; drawLocal(); }));
-  const list = pads(), col = (i) => PCOLORS[i % 4];
-  const rows = [`<div class="pl"><b style="color:${col(0)}">P1</b>キーボード（WASD 移動・Space 回避・マウスで狙う・1〜6 魔法）${isTouch ? '／画面のスティック' : ''}</div>`];
-  for (let i = 1; i < localN; i++) {
-    const g = list[i - 1];
-    rows.push(`<div class="pl"><b style="color:${col(i)}">P${i + 1}</b>${g ? '🎮 ' + escapeHtml(g.id.slice(0, 32)) + '（スティック移動・A 回避・Y 調べる）' : i === 1 ? '矢印キーで移動・右 Shift / Enter / テンキー0 で回避' : '⚠ ゲームパッドをつないでボタンを押してください'}</div>`);
-  }
-  rows.push('<p class="hint">2 人目からは魔法を自動で撃ちます。ゲームパッドはつないでからボタンを 1 回押すと見つかります。</p>');
-  $('localPads').innerHTML = rows.join('');
-}
-$('btnLocal').onclick = () => { initAudio(); sfx('ui'); UI.show('local'); drawLocal(); clearInterval(S.padPoll); S.padPoll = setInterval(() => { if (!$('local').classList.contains('hidden')) drawLocal(); }, 1000); };
-$('btnLocalClose').onclick = () => { UI.show('local', false); clearInterval(S.padPoll); };
-$('btnLocalStart').onclick = () => {
-  clearInterval(S.padPoll); UI.show('local', false);
-  S.local = localN; S.me = 'p0';
-  const players = Array.from({ length: localN }, (_, i) => ({ id: 'p' + i, name: i === 0 ? myName() : 'P' + (i + 1) }));
-  startRun(players, save.diff);
-};
 
 // ---------- チャット ----------
 function showChat(name, text) { UI.chatLine($('lobbyChat'), name, text); UI.chatLine($('chatLog'), name, text); if (S.mode === 'play') sfx('ui'); }
@@ -467,8 +403,12 @@ function drawTitle(dt) {
 // ---------- メインループ ----------
 let last = performance.now(), acc = 0, snapAcc = 0, hostEv = [], seenT = 0;
 const STEP = 1 / 60;
+let pingT = 0;
 function frame(now) {
   const dt = Math.max(0, Math.min(0.1, (now - last) / 1000)); last = now;
+  // つながりの見張り（パトロールと同じく、12 秒なにも届かなければ切れたことにする）
+  pingT += dt;
+  if (pingT > 2) { pingT = 0; if (S.host) { S.host.broadcast({ t: 'ping' }); S.host.check(); } if (S.guest) { S.guest.send({ t: 'ping' }); S.guest.check(); } }
   if (S.mode === 'title' || S.mode === 'lobby') { drawTitle(dt); requestAnimationFrame(frame); return; }
   if (S.mode !== 'play') { requestAnimationFrame(frame); return; }
   let view = null;

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "魔法戦争 v4 — 魔法だけで戦うローグライク",
   "scripts": {
-    "start": "node server.mjs",
+    "start": "npx serve .",
     "test": "node tests/sim.mjs && node tests/fxkeys.mjs",
     "sw": "node tools/gen-sw.mjs"
   }

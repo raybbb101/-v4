@@ -1,208 +1,102 @@
-// 通信。どのつなぎ方でも同じ形（Host / Guest）で使えるようにしてある。
-//  peer   … PeerJS（インターネット経由でルームコード）
-//  lan    … 同じ Wi-Fi の PC で server.mjs を動かし、その PC の部屋に入る（WebSocket）
-//  direct … サーバーなし。招待コードと返事コードを交換して、端末どうしを直接つなぐ（WebRTC）
-// ホストのブラウザが戦いを計算し、ゲストには結果を送る。
-const PREFIX = 'mahou-sensou-v4-';
-const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' }] };
-const TIMEOUT_MS = 15000;
+// オンライン協力（2〜4 人）。「パトロール」と同じつなぎ方：PeerJS でブラウザ同士を直接つなぐ。
+// 大事な点：PeerJS の標準設定のまま使う（中継サーバー TURN が入っているので、スマホの回線やルーター越しでもつながる）。
+// 部屋を作った人（ホスト）のブラウザが戦いを計算し、仲間には結果を送る。
+const PREFIX = 'mahou-sensou-v4-room-';
+const CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const MAX_GUESTS = 3;
 
-const errText = (err) => {
-  const t = err && err.type;
-  if (t === 'peer-unavailable') return 'そのルームが見つかりません。コードを確認してください。';
-  if (t === 'network' || t === 'server-error' || t === 'socket-error') return '接続サーバーに届きません。「同じ Wi-Fi で遊ぶ」も試してください。';
-  if (t === 'browser-incompatible') return 'このブラウザはオンライン対戦に対応していません。';
-  return '接続できませんでした（' + (t || err) + '）。「同じ Wi-Fi で遊ぶ」も試してください。';
-};
-
-// PeerJS の読み込み（unpkg がだめなら jsDelivr から）
-function ensurePeer() {
-  if (window.Peer) return Promise.resolve(true);
-  return new Promise((res) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
-    s.onload = () => res(!!window.Peer); s.onerror = () => res(false);
-    document.head.appendChild(s);
+let peerLib = null;
+/** PeerJS を読み込む（unpkg がだめなら jsDelivr） */
+export function loadPeer() {
+  if (window.Peer) return Promise.resolve();
+  if (!peerLib) peerLib = new Promise((res, rej) => {
+    const urls = ['https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js', 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js'];
+    const tryAt = (i) => {
+      if (i >= urls.length) { peerLib = null; rej(new Error('load failed')); return; }
+      const s = document.createElement('script'); s.src = urls[i];
+      s.onload = () => (window.Peer ? res() : tryAt(i + 1)); s.onerror = () => tryAt(i + 1);
+      document.head.appendChild(s);
+    };
+    tryAt(0);
   });
+  return peerLib;
 }
+const LOAD_FAIL = 'オンライン用の部品を読み込めませんでした。インターネットにつながっているか確認して、もう一度ためしてください。';
+const errText = (t) => ({
+  'peer-unavailable': 'その番号のルームが見つかりません。コードを確認してください（ホストがルーム画面を開いたままか確認）。',
+  network: '接続サーバーに届きません。インターネットを確認してください。',
+  'server-error': '接続サーバーが混んでいます。少し待ってもう一度。',
+  'socket-error': '接続サーバーに届きません。インターネットを確認してください。',
+  'socket-closed': '接続サーバーとの接続が切れました。もう一度ためしてください。',
+  'browser-incompatible': 'このブラウザはオンラインに対応していません（Chrome か Safari の最新版を使ってください）。',
+  disconnected: '接続サーバーとの接続が切れました。',
+}[t] || 'つながりませんでした（' + t + '）。もう一度ためしてください。');
 
-// ================= PeerJS =================
-class PeerHost {
-  constructor(H) { this.H = H; this.conns = new Set(); ensurePeer().then((ok) => (ok ? this.open() : H.error('通信ライブラリを読み込めませんでした。「同じ Wi-Fi で遊ぶ」を試してください。'))); }
-  open() {
-    let code = '';
-    for (let i = 0; i < 5; i++) code += CHARS[Math.floor(Math.random() * CHARS.length)];
-    this.peer = new window.Peer(PREFIX + code, { debug: 0, config: ICE });
-    const to = setTimeout(() => { if (!this.code) this.H.error('接続サーバーから返事がありません。「同じ Wi-Fi で遊ぶ」を試してください。'); }, TIMEOUT_MS);
-    this.peer.on('open', () => { clearTimeout(to); this.code = code; this.H.ready(code); });
-    this.peer.on('error', (err) => {
-      if (err.type === 'unavailable-id') { this.peer.destroy(); this.open(); }
-      else if (!this.code) { clearTimeout(to); this.H.error(errText(err)); }
-    });
-    this.peer.on('disconnected', () => { try { this.peer.reconnect(); } catch { /* 無視 */ } });
-    this.peer.on('connection', (conn) => {
-      conn.on('open', () => {
-        if (this.conns.size >= MAX_GUESTS || this.locked) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
-        this.conns.add(conn); this.H.join(conn);
-      });
-      conn.on('data', (m) => { if (m && m.t) this.H.message(conn, m); });
-      const gone = () => { if (this.conns.delete(conn)) this.H.leave(conn); };
-      conn.on('close', gone); conn.on('error', gone);
-    });
-  }
-  send(conn, m) { if (conn.open) conn.send(m); }
-  broadcast(m) { for (const c of this.conns) if (c.open) c.send(m); }
-  close() { try { this.peer && this.peer.destroy(); } catch { /* 無視 */ } }
-}
-class PeerGuest {
-  constructor(code, H) {
-    this.H = H;
-    let settled = false;
-    const fail = (t) => { if (!settled) { settled = true; H.error(t); this.close(); } };
-    ensurePeer().then((ok) => {
-      if (!ok) return fail('通信ライブラリを読み込めませんでした。「同じ Wi-Fi で遊ぶ」を試してください。');
-      this.peer = new window.Peer({ debug: 0, config: ICE });
-      this.peer.on('error', (err) => fail(errText(err)));
-      this.peer.on('open', () => {
-        const conn = this.peer.connect(PREFIX + code.trim().toUpperCase(), { reliable: true, serialization: 'json' });
-        this.conn = conn;
-        conn.on('open', () => { settled = true; H.open(); });
-        conn.on('data', (m) => { if (m && m.t) H.message(m); });
-        conn.on('close', () => { if (settled) H.close(); });
-        conn.on('error', () => {});
-      });
-      setTimeout(() => fail('接続がタイムアウトしました。コードを確認するか、「同じ Wi-Fi で遊ぶ」を試してください。'), TIMEOUT_MS);
-    });
-  }
-  send(m) { if (this.conn && this.conn.open) this.conn.send(m); }
-  close() { try { this.peer && this.peer.destroy(); } catch { /* 無視 */ } }
-}
-
-// ================= 同じ Wi-Fi の PC（server.mjs） =================
-const wsUrl = () => (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
-/** server.mjs から開いているときだけ { urls: [...] } が返る */
-export async function lanInfo() {
-  if (location.protocol === 'file:') return null;
-  try { const r = await fetch('lan.json', { cache: 'no-store' }); if (!r.ok) return null; const j = await r.json(); return j && j.lan ? j : null; } catch { return null; }
-}
-class LanHost {
+/** ホスト。H: { ready(code), join(conn), message(conn, msg), leave(conn), error(text) } */
+export class Host {
   constructor(H) {
-    this.H = H; this.conns = new Map();
-    const ws = (this.ws = new WebSocket(wsUrl()));
-    ws.onopen = () => ws.send(JSON.stringify({ t: 'create' }));
-    ws.onerror = () => H.error('この PC のサーバーにつながりません。');
-    ws.onclose = () => { for (const c of this.conns.values()) { c.open = false; H.leave(c); } this.conns.clear(); };
-    ws.onmessage = (ev) => {
-      const m = JSON.parse(ev.data);
-      if (m.t === 'created') { this.code = m.code; H.ready(m.code); }
-      else if (m.t === 'peer-join') {
-        if (this.conns.size >= MAX_GUESTS || this.locked) { ws.send(JSON.stringify({ t: 'to', id: m.id, m: { t: 'full' } })); return; }
-        const c = { id: m.id, open: true, send: (x) => ws.send(JSON.stringify({ t: 'to', id: m.id, m: x })) };
-        this.conns.set(m.id, c); H.join(c);
-      } else if (m.t === 'peer-leave') { const c = this.conns.get(m.id); if (c) { c.open = false; this.conns.delete(m.id); H.leave(c); } }
-      else if (m.t === 'from') { const c = this.conns.get(m.id); if (c && m.m && m.m.t) H.message(c, m.m); }
-    };
+    this.H = H; this.conns = new Set(); this.locked = false; this.closed = false;
+    loadPeer().then(() => this.open(), () => H.error(LOAD_FAIL));
   }
-  send(conn, m) { if (conn.open) conn.send(m); }
-  broadcast(m) { if (this.ws.readyState === 1 && this.conns.size) this.ws.send(JSON.stringify({ t: 'all', m })); }
-  close() { try { this.ws.close(); } catch { /* 無視 */ } }
+  open() {
+    if (this.closed) return;
+    this.code = Array.from({ length: 5 }, () => CHARS[Math.floor(Math.random() * CHARS.length)]).join('');
+    const peer = (this.peer = new window.Peer(PREFIX + this.code));
+    peer.on('open', () => this.H.ready(this.code));
+    peer.on('connection', (c) => {
+      // パトロールと同じ：仲間からの最初のメッセージ（あいさつ）で受け入れる
+      c.on('data', (m) => {
+        if (!m || typeof m !== 'object' || !m.t) return;
+        if (!this.conns.has(c)) {
+          if (this.conns.size >= MAX_GUESTS || this.locked) { try { c.send({ t: m.t === 'name' ? (this.locked ? 'reject' : 'full') : 'full', text: 'もう冒険が始まっています。' }); } catch { /* 無視 */ } setTimeout(() => c.close(), 400); return; }
+          this.conns.add(c); c.lastSeen = performance.now(); this.H.join(c);
+        }
+        c.lastSeen = performance.now();
+        this.H.message(c, m);
+      });
+      const gone = () => { if (this.conns.delete(c)) this.H.leave(c); };
+      c.on('close', gone); c.on('error', gone);
+    });
+    peer.on('disconnected', () => { if (!this.closed && this.peer === peer) try { peer.reconnect(); } catch { /* 無視 */ } });
+    peer.on('error', (e) => {
+      if (e.type === 'unavailable-id') { try { peer.destroy(); } catch { /* 無視 */ } this.open(); return; }
+      if (e.type === 'peer-unavailable') return;
+      this.H.error(errText(e.type));
+    });
+  }
+  /** 12 秒なにも届かない仲間は抜けたことにする */
+  check() { const now = performance.now(); for (const c of [...this.conns]) if (now - c.lastSeen > 12000) { this.conns.delete(c); try { c.close(); } catch { /* 無視 */ } this.H.leave(c); } }
+  send(c, m) { if (c.open) try { c.send(m); } catch { /* 無視 */ } }
+  broadcast(m) { for (const c of this.conns) if (c.open) try { c.send(m); } catch { /* 無視 */ } }
+  close() { this.closed = true; try { this.peer && this.peer.destroy(); } catch { /* 無視 */ } }
 }
-class LanGuest {
+
+/** ゲスト。H: { open(), message(msg), close(), error(text) } */
+export class Guest {
   constructor(code, H) {
-    this.H = H;
-    let settled = false;
-    const ws = (this.ws = new WebSocket(wsUrl()));
-    ws.onopen = () => ws.send(JSON.stringify({ t: 'join', code: String(code).trim() }));
-    ws.onerror = () => { if (!settled) { settled = true; H.error('この PC のサーバーにつながりません。'); } };
-    ws.onclose = () => { if (settled) H.close(); };
-    ws.onmessage = (ev) => {
-      const m = JSON.parse(ev.data);
-      if (m.t === 'joined') { settled = true; H.open(); }
-      else if (m.t === 'error') { settled = true; H.error(m.msg); }
-      else if (m.t === 'rel' && m.m && m.m.t) H.message(m.m);
-    };
+    this.H = H; this.closed = false; this.welcomed = false;
+    code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    loadPeer().then(() => {
+      if (this.closed) return;
+      const peer = (this.peer = new window.Peer());
+      this.timer = setTimeout(() => { if (!this.welcomed) { H.error('ルームに届きませんでした。コードを確認して、もう一度ためしてください。'); this.close(); } }, 15000);
+      peer.on('open', () => {
+        const conn = (this.conn = peer.connect(PREFIX + code, { reliable: true }));
+        conn.on('open', () => H.open());
+        conn.on('data', (m) => { if (!m || typeof m !== 'object' || !m.t) return; this.lastSeen = performance.now(); if (!this.welcomed) { this.welcomed = true; clearTimeout(this.timer); } H.message(m); });
+        conn.on('close', () => this.lost());
+        conn.on('error', () => this.lost());
+      });
+      peer.on('disconnected', () => { if (!this.closed) try { peer.reconnect(); } catch { /* 無視 */ } });
+      peer.on('error', (e) => {
+        if (this.welcomed && e.type !== 'peer-unavailable') return;
+        clearTimeout(this.timer); H.error(errText(e.type)); this.close();
+      });
+    }, () => H.error(LOAD_FAIL));
   }
-  send(m) { if (this.ws.readyState === 1) this.ws.send(JSON.stringify({ t: 'rel', m })); }
-  close() { try { this.ws.close(); } catch { /* 無視 */ } }
+  lost() { if (this.closed) return; this.close(); this.H.close(); }
+  /** 12 秒なにも届かなければ切れたことにする */
+  check() { if (this.welcomed && this.lastSeen && performance.now() - this.lastSeen > 12000) this.lost(); }
+  send(m) { if (this.conn && this.conn.open) try { this.conn.send(m); } catch { /* 無視 */ } }
+  close() { this.closed = true; clearTimeout(this.timer); try { this.peer && this.peer.destroy(); } catch { /* 無視 */ } }
 }
-
-// ================= 直接つなぐ（サーバーなし・コード交換） =================
-const b64u = (bytes) => { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
-const unb64u = (s) => { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)); };
-async function pack(desc) {
-  // 必要な行だけ残して小さくする
-  const sdp = desc.sdp.split('\r\n').filter((l) => l && !/^a=(extmap|rtcp-fb|ssrc|msid|fmtp)/.test(l)).join('\n');
-  const raw = new TextEncoder().encode((desc.type === 'offer' ? 'O' : 'A') + sdp);
-  if (window.CompressionStream) {
-    const cs = new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate-raw')));
-    return 'M4Z' + b64u(new Uint8Array(await cs.arrayBuffer()));
-  }
-  return 'M4P' + b64u(raw);
-}
-async function unpack(code) {
-  code = String(code).replace(/\s+/g, '');
-  const i = code.indexOf('M4'); if (i < 0) throw new Error('コードの形がちがいます');
-  code = code.slice(i);
-  const kind = code[2], data = unb64u(code.slice(3));
-  let raw = data;
-  if (kind === 'Z') raw = new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
-  const text = new TextDecoder().decode(raw);
-  return { type: text[0] === 'O' ? 'offer' : 'answer', sdp: text.slice(1).split('\n').join('\r\n') + '\r\n' };
-}
-function gathered(pc, ms = 4000) {
-  return new Promise((res) => {
-    if (pc.iceGatheringState === 'complete') return res();
-    const t = setTimeout(res, ms);
-    pc.addEventListener('icegatheringstatechange', () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); } });
-  });
-}
-function wrapChannel(dc, pc, onOpen, onMsg, onClose) {
-  const c = { open: false, pc, send: (m) => { if (dc.readyState === 'open') dc.send(JSON.stringify(m)); }, close: () => { try { pc.close(); } catch { /* 無視 */ } } };
-  dc.onopen = () => { c.open = true; onOpen(c); };
-  dc.onmessage = (ev) => { try { const m = JSON.parse(ev.data); if (m && m.t) onMsg(c, m); } catch { /* 無視 */ } };
-  dc.onclose = () => { if (c.open) { c.open = false; onClose(c); } };
-  pc.onconnectionstatechange = () => { if ((pc.connectionState === 'failed' || pc.connectionState === 'closed') && c.open) { c.open = false; onClose(c); } };
-  return c;
-}
-export class DirectHost {
-  constructor(H) { this.H = H; this.conns = new Set(); this.pending = null; setTimeout(() => H.ready(''), 0); }
-  /** 次の仲間のための招待コードを作る */
-  async invite() {
-    if (this.pending) try { this.pending.close(); } catch { /* 無視 */ }
-    const pc = new RTCPeerConnection(ICE), dc = pc.createDataChannel('mahou', { ordered: true });
-    const c = wrapChannel(dc, pc, (cc) => { if (this.conns.size >= MAX_GUESTS || this.locked) { cc.send({ t: 'full' }); setTimeout(() => cc.close(), 300); return; } this.conns.add(cc); this.pending = null; this.H.join(cc); }, (cc, m) => this.H.message(cc, m), (cc) => { if (this.conns.delete(cc)) this.H.leave(cc); });
-    this.pending = c;
-    await pc.setLocalDescription(await pc.createOffer());
-    await gathered(pc);
-    return pack(pc.localDescription);
-  }
-  /** 仲間から届いた返事コードを入れる */
-  async accept(code) {
-    if (!this.pending) throw new Error('先に招待コードを作ってください');
-    const d = await unpack(code); if (d.type !== 'answer') throw new Error('それは「返事コード」ではありません');
-    await this.pending.pc.setRemoteDescription(d);
-  }
-  send(conn, m) { if (conn.open) conn.send(m); }
-  broadcast(m) { for (const c of this.conns) c.send(m); }
-  close() { for (const c of this.conns) c.close(); if (this.pending) this.pending.close(); }
-}
-export class DirectGuest {
-  constructor(H) { this.H = H; }
-  /** 招待コードを入れると、ホストに返す返事コードができる */
-  async answer(code) {
-    const d = await unpack(code); if (d.type !== 'offer') throw new Error('それは「招待コード」ではありません');
-    const pc = (this.pc = new RTCPeerConnection(ICE));
-    pc.ondatachannel = (ev) => { this.c = wrapChannel(ev.channel, pc, () => this.H.open(), (c, m) => this.H.message(m), () => this.H.close()); };
-    await pc.setRemoteDescription(d);
-    await pc.setLocalDescription(await pc.createAnswer());
-    await gathered(pc);
-    return pack(pc.localDescription);
-  }
-  send(m) { if (this.c) this.c.send(m); }
-  close() { try { this.pc && this.pc.close(); } catch { /* 無視 */ } }
-}
-
-export function makeHost(kind, H) { return kind === 'lan' ? new LanHost(H) : kind === 'direct' ? new DirectHost(H) : new PeerHost(H); }
-export function makeGuest(kind, code, H) { return kind === 'lan' ? new LanGuest(code, H) : kind === 'direct' ? new DirectGuest(H) : new PeerGuest(code, H); }

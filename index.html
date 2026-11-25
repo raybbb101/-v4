@@ -15,7 +15,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Zen+Kaku+Gothic+New:wght@400;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -32,14 +31,10 @@
       <button id="btnSolo" class="primary">ひとりで挑む</button>
       <button id="btnHost">ルームを作る</button>
     </div>
-    <div class="or"><span>仲間のルームに入る</span></div>
+    <div class="or"><span>オンライン協力（2〜4 人）：仲間のルームに入る</span></div>
     <div class="row join">
       <input id="codeInput" maxlength="6" placeholder="コード 5 文字" autocomplete="off" spellcheck="false" autocapitalize="characters">
       <button id="btnJoin">参加する</button>
-    </div>
-    <div class="row">
-      <button id="btnWifi">📶 同じ Wi-Fi で遊ぶ</button>
-      <button id="btnLocal">🎮 同じ画面で協力</button>
     </div>
     <p id="titleStatus" role="status"></p>
     <div class="row small">
@@ -58,63 +53,10 @@
     <h2 id="lobbyTitle">ルーム</h2>
     <div id="codeBox" class="codeBox"><span>ルームコード</span><b id="lobbyCode">-----</b><button id="copyCode">コピー</button><button id="copyLink">招待リンク</button></div>
     <p class="hint" id="lobbyHint">仲間にこのコードを伝えてください（最大 4 人）。</p>
-    <div id="directBox" class="hidden">
-      <div class="step"><b>① 招待コードを作る</b><button id="btnInvite" class="primary">招待コードを作る</button>
-        <textarea id="inviteOut" readonly rows="3" placeholder="ここに招待コードが出ます"></textarea>
-        <div class="row"><button id="copyInvite">コピー</button><button id="shareInvite">LINE などで送る</button></div></div>
-      <div class="step"><b>② 仲間から届いた「返事コード」を貼る</b>
-        <textarea id="answerIn" rows="3" placeholder="返事コードを貼りつけ"></textarea>
-        <button id="btnAccept" class="primary">つなぐ</button></div>
-      <p class="hint">3 人目・4 人目も、①からくり返します。</p>
-    </div>
     <ul id="lobbyPlayers"></ul>
     <div class="chatBox"><div id="lobbyChat" class="chatLog"></div><input id="lobbyChatIn" maxlength="80" placeholder="メッセージを書いて Enter"></div>
     <div class="row"><button id="btnStart" class="primary">冒険を始める</button><button id="btnLeave">やめる</button></div>
   </div>
-</section>
-
-<!-- 同じ Wi-Fi -->
-<section id="wifi" class="overlay hidden">
-  <h2>同じ Wi-Fi で遊ぶ</h2>
-  <div class="cols">
-    <div class="panel">
-      <h3>A. 直接つなぐ <small>（サーバー不要・スマホでも OK）</small></h3>
-      <p class="hint">部屋を作る人と入る人が、コードを 1 往復だけ送り合います（LINE やメッセージで OK）。</p>
-      <button id="btnDirectHost" class="primary">部屋を作る（ホスト）</button>
-      <div class="step"><b>仲間の部屋に入る</b>
-        <textarea id="inviteIn" rows="3" placeholder="ホストから届いた招待コードを貼りつけ"></textarea>
-        <button id="btnDirectJoin">返事コードを作る</button>
-        <textarea id="answerOut" class="hidden" readonly rows="3"></textarea>
-        <div class="row hidden" id="answerBtns"><button id="copyAnswer">コピー</button><button id="shareAnswer">LINE などで送る</button></div>
-        <p class="hint" id="directStatus"></p>
-      </div>
-    </div>
-    <div class="panel">
-      <h3>B. PC で部屋を立てる <small>（いちばん安定）</small></h3>
-      <div id="lanOn" class="hidden">
-        <p class="hint">この PC のサーバーにつながっています。仲間はスマホや PC のブラウザでこのアドレスを開いてください：</p>
-        <div id="lanUrls" class="urls"></div>
-        <button id="btnLanHost" class="primary">この PC で部屋を作る</button>
-        <div class="row join"><input id="lanCode" maxlength="4" placeholder="部屋番号 4 けた" inputmode="numeric"><button id="btnLanJoin">入る</button></div>
-      </div>
-      <div id="lanOff">
-        <p class="hint">PC で次のコマンドを 1 回動かすと、同じ Wi-Fi のスマホや PC が「http://PC のアドレス:8080」で集まれます（インストール不要・Node.js だけ）。</p>
-        <pre>node server.mjs</pre>
-        <p class="hint">動かすと、仲間が開くアドレスが表示されます。そのアドレスで開いたこの画面に「この PC で部屋を作る」が出ます。</p>
-      </div>
-    </div>
-  </div>
-  <p id="wifiStatus" role="status"></p>
-  <div class="row"><button id="btnWifiClose">もどる</button></div>
-</section>
-
-<!-- 同じ画面 -->
-<section id="local" class="overlay hidden">
-  <h2>同じ画面で協力</h2>
-  <p>1 台の画面で 2〜4 人。ネットはいりません。</p>
-  <div class="field"><span>人数</span><div id="localN" class="seg"></div></div>
-  <div id="localPads" class="panel"></div>
-  <div class="row"><button id="btnLocalStart" class="primary">冒険を始める</button><button id="btnLocalClose">もどる</button></div>
 </section>
 
 <!-- HUD -->
